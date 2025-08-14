@@ -1,4 +1,4 @@
-# TS-Unify: Time Series Unified Framework
+# TS-Unity: Time Series Unity Framework
 
 A comprehensive and modular framework for time series analysis including forecasting, anomaly detection, imputation, and classification tasks. The framework provides a unified interface for various state-of-the-art models and easy experimentation.
 
@@ -55,7 +55,7 @@ src/
 
 ```bash
 git clone <repository-url>
-cd TS-Unify
+cd TS-Unity
 pip install -r requirements.txt
 ```
 
@@ -350,4 +350,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**TS-Unify v2.0** - A modern, type-safe, and well-structured time series analysis framework.
+**TS-Unity v2.0** - A modern, type-safe, and well-structured time series analysis framework.
