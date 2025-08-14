@@ -1,0 +1,60 @@
+task_name: 'anomaly_detection'
+is_training: 1
+model: 'AnomalyTransformer'
+
+# Data settings
+data: 'PSM'
+root_path: './data/PSM/'
+data_path: 'train.csv'
+features: 'M'
+target: 'OT'
+freq: 'h'
+checkpoints: './checkpoints/'
+
+# Anomaly detection specific
+anomaly_ratio: 0.25
+win_size: 100
+
+# Sequence settings
+seq_len: 100
+label_len: 50
+pred_len: 0
+
+# Model architecture
+enc_in: 25
+dec_in: 25
+c_out: 25
+d_model: 512
+n_heads: 8
+e_layers: 3
+d_layers: 1
+d_ff: 512
+factor: 5
+dropout: 0.0
+embed: 'timeF'
+activation: 'gelu'
+output_attention: true
+
+# Training settings
+num_workers: 10
+itr: 1
+train_epochs: 10
+batch_size: 256
+patience: 3
+learning_rate: 0.0001
+des: 'anomaly_experiment'
+loss: 'MSE'
+lradj: 'type1'
+use_amp: false
+
+# Hardware settings
+use_gpu: true
+gpu: 0
+gpu_type: 'cuda'
+use_multi_gpu: false
+devices: '0,1,2,3'
+seed: 2021
+
+# Misc settings
+use_dtw: false
+use_tqdm: true
