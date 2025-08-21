@@ -12,22 +12,28 @@ class DAGMM(nn.Module):
     오토인코더와 가우시안 혼합 모델을 결합한 이상 탐지 모델입니다.
     """
     
-    def __init__(self, params: Dict[str, Any]):
+    def __init__(self, config):
         """
         Args:
-            params: 모델 하이퍼파라미터
-                - window_size: 윈도우 크기
-                - feature_num: 특성 수
-                - hidden_size: 숨겨진 레이어 크기
-                - latent_size: 잠재 공간 크기
+            config: Configuration object or params dict with model parameters
         """
         super(DAGMM, self).__init__()
 
+        # Handle both old params dict format and new config format
+        if hasattr(config, 'win_size'):
+            # New config format
+            self.n_window = config.win_size
+            self.n_feats = config.enc_in
+            self.n_hidden = getattr(config, 'hidden_size', 128)
+            self.n_latent = getattr(config, 'latent_size', 64)
+        else:
+            # Old params dict format (for backward compatibility)
+            self.n_window = config.get('window_size', 5)
+            self.n_feats = config.get('feature_num', 7)
+            self.n_hidden = config.get('hidden_size', 128)
+            self.n_latent = config.get('latent_size', 64)
+            
         self.beta = 0.01
-        self.n_window = params['window_size']  # DAGMM w_size = 5
-        self.n_feats = params['feature_num']
-        self.n_hidden = params['hidden_size']
-        self.n_latent = params['latent_size']
 
         self.n = self.n_feats * self.n_window
         self.n_gmm = self.n_feats * self.n_window
@@ -100,6 +106,81 @@ class DAGMM(nn.Module):
         gamma = rearrange(gamma, 'b (w f) -> b w f', w=w) 
         
         return z_c, x_hat, z, gamma
+    
+    def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Reconstruct input data.
+        
+        Args:
+            x: Input tensor (batch_size, window_size, feature_num)
+            
+        Returns:
+            Reconstructed output tensor (batch_size, window_size, feature_num)
+        """
+        _, x_hat, _, _ = self.forward(x)
+        return x_hat
+    
+    def detect_anomaly(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Detect anomalies using DAGMM reconstruction error.
+        
+        Args:
+            x: Input tensor (batch_size, window_size, feature_num)
+            
+        Returns:
+            Tuple of (reconstructed_output, anomaly_scores)
+        """
+        z_c, x_hat, z, gamma = self.forward(x)
+        
+        # 재구성 오차를 이상 점수로 사용
+        anomaly_scores = torch.mean((x - x_hat) ** 2, dim=(1, 2))
+        
+        return x_hat, anomaly_scores
+    
+    def get_anomaly_score(self, x: torch.Tensor, method: str = 'mse') -> torch.Tensor:
+        """
+        Calculate anomaly scores using reconstruction error.
+        
+        Args:
+            x: Input tensor (batch_size, window_size, feature_num)
+            method: Scoring method ('mse', 'mae', 'combined')
+            
+        Returns:
+            Anomaly scores tensor
+        """
+        reconstructed = self.reconstruct(x)
+        
+        if method == 'mse':
+            return torch.mean((x - reconstructed) ** 2, dim=(1, 2))
+        elif method == 'mae':
+            return torch.mean(torch.abs(x - reconstructed), dim=(1, 2))
+        elif method == 'combined':
+            mse = torch.mean((x - reconstructed) ** 2, dim=(1, 2))
+            mae = torch.mean(torch.abs(x - reconstructed), dim=(1, 2))
+            return 0.5 * (mse + mae)
+        else:
+            raise ValueError(f"Unknown scoring method: {method}")
+    
+    def compute_loss(self, x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
+        """
+        Compute training loss for DAGMM model.
+        
+        Args:
+            x: Input tensor (batch_size, window_size, feature_num)
+            criterion: Loss function
+            
+        Returns:
+            Combined loss tensor
+        """
+        z_c, x_hat, z, gamma = self.forward(x)
+        
+        # 재구성 손실
+        rec_loss = criterion(x_hat, x)
+        
+        # 추가적인 DAGMM 손실을 여기에 구현할 수 있습니다
+        # (예: GMM 정규화 손실 등)
+        
+        return torch.mean(rec_loss)
 
 
 # 하위 호환성을 위한 별칭

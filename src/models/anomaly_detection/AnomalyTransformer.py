@@ -54,17 +54,40 @@ class Encoder(nn.Module):
         return x, series_list, prior_list, sigma_list
 
 
-class Model(nn.Module):
-    def __init__(self, params, activation='gelu', output_attention=True):
-        super(Model, self).__init__()
-        self.window_size = params['window_size']
-        self.feature_num = params['feature_num']
-        self.num_transformer_blocks = params['n_layer']
-        self.num_heads = params['n_head']
-        self.embedding_dims = params['hidden_size']
-        self.attn_dropout = params['attn_pdrop']
-        self.ff_dropout = params['resid_pdrop']
+def my_kl_loss(p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
+    """KL divergence loss for anomaly detection."""
+    res = p * (torch.log(p + 0.0001) - torch.log(q + 0.0001))
+    return torch.mean(torch.sum(res, dim=-1), dim=1)
 
+
+class Model(nn.Module):
+    def __init__(self, config):
+        super(Model, self).__init__()
+        # Handle both old params dict format and new config format
+        if hasattr(config, 'win_size'):
+            # New config format
+            self.window_size = config.win_size
+            self.feature_num = config.enc_in
+            self.num_transformer_blocks = config.e_layers
+            self.num_heads = config.n_heads
+            self.embedding_dims = config.d_model
+            self.attn_dropout = config.dropout
+            self.ff_dropout = config.dropout
+            self.k = getattr(config, 'k', 3)
+            activation = config.activation
+            output_attention = config.output_attention
+        else:
+            # Old params dict format (for backward compatibility)
+            self.window_size = config.get('window_size', 100)
+            self.feature_num = config.get('feature_num', 7)
+            self.num_transformer_blocks = config.get('n_layer', 3)
+            self.num_heads = config.get('n_head', 4)
+            self.embedding_dims = config.get('hidden_size', 512)
+            self.attn_dropout = config.get('attn_pdrop', 0.1)
+            self.ff_dropout = config.get('resid_pdrop', 0.1)
+            self.k = config.get('k', 3)
+            activation = config.get('activation', 'gelu')
+            output_attention = config.get('output_attention', True)
 
         self.output_attention = output_attention
 
@@ -90,6 +113,7 @@ class Model(nn.Module):
         self.projection = nn.Linear(self.embedding_dims, self.feature_num, bias=True)
 
     def forward(self, x):
+        """Forward pass for reconstruction."""
         enc_out = self.embedding(x)
         enc_out, series, prior, sigmas = self.encoder(enc_out)
         enc_out = self.projection(enc_out)
@@ -98,3 +122,88 @@ class Model(nn.Module):
             return enc_out, series, prior, sigmas
         else:
             return enc_out  # [B, L, D]
+    
+    def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
+        """Reconstruct input data."""
+        if self.output_attention:
+            output, _, _, _ = self.forward(x)
+            return output
+        else:
+            return self.forward(x)
+    
+    def detect_anomaly(self, x: torch.Tensor) -> tuple:
+        """
+        Detect anomalies using AnomalyTransformer approach.
+        
+        Args:
+            x: Input tensor [B, L, D]
+            
+        Returns:
+            Tuple of (reconstructed_output, anomaly_scores)
+        """
+        output, series, prior, _ = self.forward(x)
+        
+        # Calculate reconstruction loss
+        rec_loss = torch.mean((x - output) ** 2, dim=-1)
+        
+        # Calculate series loss (Association Discrepancy)
+        series_loss = 0.0
+        prior_loss = 0.0
+        temperature = 50
+        
+        for u in range(len(prior)):
+            if u == 0:
+                series_loss = my_kl_loss(series[u], (
+                    prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.window_size)
+                ).detach()) * temperature
+                prior_loss = my_kl_loss(
+                    (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.window_size)),
+                    series[u].detach()) * temperature
+            else:
+                series_loss += my_kl_loss(series[u], (
+                    prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.window_size)
+                ).detach()) * temperature
+                prior_loss += my_kl_loss(
+                    (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.window_size)),
+                    series[u].detach()) * temperature
+
+        # Calculate final anomaly scores
+        metric = torch.softmax((-series_loss - prior_loss), dim=-1)
+        anomaly_scores = metric * rec_loss
+        
+        return output, anomaly_scores
+    
+    def get_anomaly_score(self, x: torch.Tensor) -> torch.Tensor:
+        """Get anomaly scores for input data."""
+        _, scores = self.detect_anomaly(x)
+        return scores
+    
+    def compute_loss(self, x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
+        """
+        Compute training loss for AnomalyTransformer.
+        
+        Args:
+            x: Input tensor
+            criterion: Loss function
+            
+        Returns:
+            Combined loss tensor
+        """
+        output, series, prior, _ = self.forward(x)
+        
+        # Reconstruction loss
+        rec_loss = criterion(output, x)
+        
+        # Series loss (Association Discrepancy)
+        series_loss = 0.0
+        for u in range(len(prior)):
+            series_loss += (torch.mean(my_kl_loss(series[u], (
+                prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.window_size)
+            ).detach())) + torch.mean(
+                my_kl_loss((prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.window_size)).detach(),
+                          series[u])))
+        series_loss /= len(prior)
+        
+        # Combined loss
+        total_loss = rec_loss - self.k * series_loss
+        return torch.mean(total_loss)

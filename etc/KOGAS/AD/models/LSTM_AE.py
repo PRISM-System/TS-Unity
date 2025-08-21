@@ -15,32 +15,26 @@ class LSTMAutoencoder(nn.Module):
     인코더, 순환 모듈, 디코더로 구성된 이상 탐지 모델입니다.
     """
     
-    def __init__(self, config):
+    def __init__(self, params: Dict[str, Any]):
         """
         Args:
-            config: Configuration object with model parameters
+            params: 모델 하이퍼파라미터
+                - feature_num: 특성 수
+                - batch_size: 배치 크기
+                - rnn_type: RNN 타입 ('LSTM' 또는 'GRU')
+                - rnn_inp_size: RNN 입력 크기
+                - rnn_hid_size: RNN 숨겨진 크기
+                - nlayers: RNN 레이어 수
+                - dropout: 드롭아웃 비율
         """
         super(LSTMAutoencoder, self).__init__()
-        
-        # Handle both old params dict format and new config format
-        if hasattr(config, 'enc_in'):
-            # New config format
-            self.feature_num = config.enc_in
-            self.batch_size = config.batch_size
-            self.rnn_type = getattr(config, 'rnn_type', 'LSTM')
-            self.rnn_inp_size = getattr(config, 'rnn_inp_size', 16)
-            self.rnn_hid_size = getattr(config, 'rnn_hid_size', 16)
-            self.nlayers = getattr(config, 'nlayers', 2)
-            self.dropout = config.dropout
-        else:
-            # Old params dict format (for backward compatibility)
-            self.feature_num = config.get('feature_num', 7)
-            self.batch_size = config.get('batch_size', 32)
-            self.rnn_type = config.get('rnn_type', 'LSTM')
-            self.rnn_inp_size = config.get('rnn_inp_size', 16)
-            self.rnn_hid_size = config.get('rnn_hid_size', 16)
-            self.nlayers = config.get('nlayers', 2)
-            self.dropout = config.get('dropout', 0.3)
+        self.feature_num = params['feature_num']
+        self.batch_size = params['batch_size']
+        self.rnn_type = params['rnn_type']
+        self.rnn_inp_size = params['rnn_inp_size']
+        self.rnn_hid_size = params['rnn_hid_size']
+        self.nlayers = params['nlayers']
+        self.dropout = params['dropout']
         self.tie_weights = False
         self.res_connection = False
         self.return_hiddens = False
@@ -93,12 +87,13 @@ class LSTMAutoencoder(nn.Module):
         Returns:
             초기화된 숨겨진 상태
         """
+        device = next(self.parameters()).device if list(self.parameters()) else torch.device('cpu')
         if self.rnn_type == 'GRU':
-            return torch.zeros(self.nlayers, batch_size, self.rnn_hid_size).cuda()
+            return torch.zeros(self.nlayers, batch_size, self.rnn_hid_size, device=device)
         elif self.rnn_type == 'LSTM':
             return (
-                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size).cuda(),
-                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size).cuda()
+                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size, device=device),
+                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size, device=device)
             )
         else:
             raise ValueError(f'알 수 없는 RNN 타입: {self.rnn_type}. 유효한 옵션: "gru", "lstm"')
@@ -137,75 +132,7 @@ class LSTMAutoencoder(nn.Module):
             return decoded, hidden, output
 
         return decoded
-    
-    def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Reconstruct input data.
-        
-        Args:
-            x: Input tensor (batch_size, seq_len, feature_size)
-            
-        Returns:
-            Reconstructed output tensor (batch_size, seq_len, feature_size)
-        """
-        return self.forward(x)
-    
-    def detect_anomaly(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Detect anomalies using reconstruction error.
-        
-        Args:
-            x: Input tensor
-            
-        Returns:
-            Tuple of (reconstructed_output, anomaly_scores)
-        """
-        reconstructed = self.reconstruct(x)
-        
-        # Calculate reconstruction error as anomaly score
-        anomaly_scores = torch.mean((x - reconstructed) ** 2, dim=-1)
-        
-        return reconstructed, anomaly_scores
-    
-    def get_anomaly_score(self, x: torch.Tensor, method: str = 'mse') -> torch.Tensor:
-        """
-        Calculate anomaly scores using reconstruction error.
-        
-        Args:
-            x: Input tensor
-            method: Scoring method ('mse', 'mae', 'combined')
-            
-        Returns:
-            Anomaly scores tensor
-        """
-        reconstructed = self.reconstruct(x)
-        
-        if method == 'mse':
-            return torch.mean((x - reconstructed) ** 2, dim=-1)
-        elif method == 'mae': 
-            return torch.mean(torch.abs(x - reconstructed), dim=-1)
-        elif method == 'combined':
-            mse = torch.mean((x - reconstructed) ** 2, dim=-1)
-            mae = torch.mean(torch.abs(x - reconstructed), dim=-1)
-            return 0.5 * (mse + mae)
-        else:
-            raise ValueError(f"Unknown scoring method: {method}")
-    
-    def compute_loss(self, x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """
-        Compute training loss for LSTM autoencoder.
-        
-        Args:
-            x: Input tensor
-            criterion: Loss function
-            
-        Returns:
-            Loss tensor
-        """
-        reconstructed = self.reconstruct(x)
-        loss = criterion(reconstructed, x)
-        return torch.mean(loss)
 
 
-# Compatibility alias
+# 하위 호환성을 위한 별칭
 Model = LSTMAutoencoder

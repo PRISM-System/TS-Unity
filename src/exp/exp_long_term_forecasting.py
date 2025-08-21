@@ -38,6 +38,92 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def _select_criterion(self):
         criterion = nn.MSELoss()
         return criterion
+    
+    def detect_anomaly(self, input_data: torch.Tensor) -> torch.Tensor:
+        """
+        Detect anomalies using prediction-based method.
+        
+        Args:
+            input_data: Input tensor
+            
+        Returns:
+            Anomaly scores tensor
+        """
+        self.model.eval()
+        with torch.no_grad():
+            # For prediction-based anomaly detection, we:
+            # 1. Make predictions for the next few steps
+            # 2. Calculate prediction variance or error as anomaly score
+            
+            # Get prediction horizon
+            pred_len = getattr(self.args, 'pred_len', 1)
+            
+            # Prepare input for forecasting
+            batch_size, seq_len, features = input_data.shape
+            
+            # Create dummy decoder input (required for some models)
+            if hasattr(self.args, 'label_len'):
+                label_len = self.args.label_len
+            else:
+                label_len = seq_len // 2
+            
+            # Create dummy decoder input
+            dec_inp = torch.zeros(batch_size, pred_len, features, device=input_data.device)
+            
+            # Make predictions
+            if 'Linear' in self.args.model or 'TST' in self.args.model:
+                predictions = self.model(input_data)
+            else:
+                # For transformer-based models, we need decoder input
+                # Since we're doing anomaly detection, we'll use the input as decoder input
+                if hasattr(self.args, 'output_attention') and self.args.output_attention:
+                    predictions = self.model(input_data, input_data, dec_inp, dec_inp)[0]
+                else:
+                    predictions = self.model(input_data, input_data, dec_inp, dec_inp)
+            
+            # Calculate anomaly scores based on prediction patterns
+            if predictions.dim() == 3:  # (batch, pred_len, features)
+                # Use prediction variance across time steps as anomaly score
+                anomaly_scores = torch.var(predictions, dim=1, keepdim=True)
+            else:
+                # Use prediction magnitude as anomaly score
+                anomaly_scores = torch.mean(torch.abs(predictions), dim=-1, keepdim=True)
+            
+            return anomaly_scores
+    
+    def predict_single(self, input_data: torch.Tensor, num_steps: int = 1) -> torch.Tensor:
+        """
+        Make prediction for single input.
+        
+        Args:
+            input_data: Input tensor
+            num_steps: Number of steps to predict ahead
+            
+        Returns:
+            Predictions tensor
+        """
+        self.model.eval()
+        with torch.no_grad():
+            batch_size, seq_len, features = input_data.shape
+            
+            # Create dummy decoder input
+            dec_inp = torch.zeros(batch_size, num_steps, features, device=input_data.device)
+            
+            # Make predictions
+            if 'Linear' in self.args.model or 'TST' in self.args.model:
+                predictions = self.model(input_data)
+            else:
+                # For transformer-based models
+                if hasattr(self.args, 'output_attention') and self.args.output_attention:
+                    predictions = self.model(input_data, input_data, dec_inp, dec_inp)[0]
+                else:
+                    predictions = self.model(input_data, input_data, dec_inp, dec_inp)
+            
+            # Return predictions for the requested number of steps
+            if predictions.shape[1] >= num_steps:
+                return predictions[:, :num_steps, :]
+            else:
+                return predictions
 
     def vali(self, vali_data, vali_loader, criterion) -> Dict[str, float]:
         total_loss = []

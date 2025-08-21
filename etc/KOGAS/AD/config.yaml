@@ -1,0 +1,129 @@
+# config.yaml
+ 
+ path: ./
+ log_dir: ./logs
+ workers: 8
+ 
+ # dataset 
+ SWaT:
+   train_path: ../../data/SWaT/SWaT.A1 _ A2_Dec 2015/SWaT_Dataset_Normal_v1.pkl
+   test_path: ../../data/SWaT/SWaT.A1 _ A2_Dec 2015/SWaT_Dataset_Attack_v0.pkl
+   time_unit: seconds
+ 
+ SKAB:
+   data_dir: ../../data/SKAB
+   time_unit: seconds
+ 
+ KOGAS:
+   data_dir: ../../data/kogas
+   time_unit: hours
+ 
+ KOGAS2:
+   data_dir: ../../data/kogas
+   train_path: ../../data/kogas/kogas_a.csv
+   test_path: ../../data/kogas/kogas_c.csv
+   time_unit: hours
+ 
+ KOGAS3:
+   data_dir: ../../data/kogas
+   time_unit: hours
+ 
+ scale: standard
+ 
+ # dataloader parameters
+ loader_params:
+   batch_size: 32
+   shuffle: False
+   num_workers: 8
+   pin_memory: True
+ 
+ # model parameters
+ VTTSAT:
+   hidden_size: 128
+   n_layer: 3
+   n_head: 4
+   resid_pdrop: 0.1
+   attn_pdrop: 0.1
+   time_emb: 4
+   optim: adamw
+   lr: 0.0001
+   lradj: type1
+ 
+ VTTPAT:
+   hidden_size: 128
+   n_layer: 3
+   n_head: 4
+   resid_pdrop: 0.1
+   attn_pdrop: 0.1
+   time_emb: 4
+   optim: adamw
+   lr: 0.0001
+   lradj: type1
+ 
+ TF:
+   hidden_size: 512
+   n_layer: 3
+   n_head: 8
+   resid_pdrop: 0.1
+   attn_pdrop: 0.1
+   time_emb: 4
+   optim: adamw
+   lr: 0.0001
+   lradj: type1
+   
+ LSTM_AE:
+     rnn_type: LSTM
+     rnn_inp_size: 16
+     rnn_hid_size: 16
+     batch_size: 32
+     nlayers: 2
+     dropout: 0.3
+     optim: adam
+     lr: 0.001
+     lradj: type1
+     
+ LSTM_VAE:
+     rnn_type: LSTM
+     sequence_length: 24
+     hidden_size: 64
+     hidden_layer_depth: 2
+     latent_length: 20
+     batch_size: 32
+     dropout_rate: 0.3
+     optim: adam
+     lr: 0.001
+     lradj: type1
+ 
+ USAD:
+     hidden_size: 40
+     optim: adam
+     lr: 0.001
+     lradj: type1
+     window_size: 100
+ 
+ DAGMM:
+     hidden_size: 118
+     latent_size: 118
+     lr: 0.0001
+     lradj: type1
+     window_size: 100
+     optim: adam
+ 
+ AnomalyTransformer:
+   hidden_size: 512
+   n_layer: 3
+   n_head: 4
+   k: 3
+   resid_pdrop: 0.1
+   attn_pdrop: 0.1
+   optim: adamw
+   lr: 0.0001
+   lradj: type1
+ 
+ OmniAnomaly:
+   lr: 0.001
+   beta: 0.01
+   hidden_size: 32
+   latent_size: 8
+   optim: adamw
+   lradj: type1

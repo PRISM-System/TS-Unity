@@ -165,8 +165,9 @@ class Decoder(nn.Module):
         h_state = self.latent_to_hidden(latent)
         
         # initialize inputs for each batch
-        decoder_inputs = torch.zeros(batch_size, self.sequence_length, 1, requires_grad=True).type(self.dtype).cuda()
-        c_0 = torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size, requires_grad=True).type(self.dtype).cuda()
+        device = next(self.parameters()).device if list(self.parameters()) else torch.device('cpu')
+        decoder_inputs = torch.zeros(batch_size, self.sequence_length, 1, requires_grad=True).type(self.dtype).to(device)
+        c_0 = torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size, requires_grad=True).type(self.dtype).to(device)
         
         # RUN RNN Decoder Model
         if isinstance(self.model, nn.LSTM):
@@ -201,31 +202,18 @@ class Model(BaseEstimator, nn.Module):
     :param dropout_rate: The probability of a node being dropped-out
     '''
     
-    def __init__(self, config):
+    def __init__(self, params):
         super(Model, self).__init__()
 
-        # Handle both old params dict format and new config format
-        if hasattr(config, 'win_size'):
-            # New config format
-            self.sequence_length = config.win_size
-            self.feature_num = config.enc_in
-            self.hidden_size = getattr(config, 'hidden_size', 90)
-            self.hidden_layer_depth = getattr(config, 'hidden_layer_depth', 2)
-            self.latent_length = getattr(config, 'latent_length', 20)
-            self.batch_size = config.batch_size
-            self.rnn_type = getattr(config, 'rnn_type', 'LSTM')
-            self.dropout_rate = getattr(config, 'dropout_rate', 0.0)
-        else:
-            # Old params dict format (for backward compatibility)
-            self.sequence_length = config.get('sequence_length', 100)
-            self.feature_num = config.get('feature_num', 7)
-            self.hidden_size = config.get('hidden_size', 90)
-            self.hidden_layer_depth = config.get('hidden_layer_depth', 2)
-            self.latent_length = config.get('latent_length', 20)
-            self.batch_size = config.get('batch_size', 32)
-            self.rnn_type = config.get('rnn_type', 'LSTM')
-            self.dropout_rate = config.get('dropout_rate', 0.0)
-            
+        # params
+        self.sequence_length = params['sequence_length']
+        self.feature_num = params['feature_num']
+        self.hidden_size = params['hidden_size'] # 90
+        self.hidden_layer_depth = params['hidden_layer_depth'] # 2
+        self.latent_length = params['latent_length'] # 20
+        self.batch_size = params['batch_size'] # 32
+        self.rnn_type = params['rnn_type'] # GRU/LSTM
+        self.dropout_rate = params['dropout_rate'] # 0
         self.dtype = torch.FloatTensor
         
         # models
@@ -250,11 +238,12 @@ class Model(BaseEstimator, nn.Module):
 
     # init hidden
     def init_hidden(self, batch_size):
+        device = next(self.parameters()).device if list(self.parameters()) else torch.device('cpu')
         if self.rnn_type == 'GRU':
-            return torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size).cuda()
+            return torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size, device=device)
         elif self.rnn_type == 'LSTM':
-            return (torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size).cuda(),
-                    torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size).cuda())
+            return (torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size, device=device),
+                    torch.zeros(self.hidden_layer_depth, batch_size, self.hidden_size, device=device))
         else:
             raise Exception('Unknown rnn_type. Valid options: "gru", "lstm"')
     
@@ -281,81 +270,3 @@ class Model(BaseEstimator, nn.Module):
         
         # x_decoded = x_decoded.permute(1,0,2)
         return [x_decoded, kl_loss]
-    
-    def reconstruct(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Reconstruct input data using VAE.
-        
-        Args:
-            x: Input tensor (batch_size, seq_len, feature_size)
-            
-        Returns:
-            Reconstructed output tensor (batch_size, seq_len, feature_size)
-        """
-        x_decoded, _ = self.forward(x)
-        return x_decoded
-    
-    def detect_anomaly(self, x: torch.Tensor) -> tuple:
-        """
-        Detect anomalies using VAE reconstruction error.
-        
-        Args:
-            x: Input tensor (batch_size, seq_len, feature_size)
-            
-        Returns:
-            Tuple of (reconstructed_output, anomaly_scores)
-        """
-        x_decoded, kl_loss = self.forward(x)
-        
-        # Calculate reconstruction error as anomaly score
-        anomaly_scores = torch.mean((x - x_decoded) ** 2, dim=(1, 2))
-        
-        return x_decoded, anomaly_scores
-    
-    def get_anomaly_score(self, x: torch.Tensor, method: str = 'mse') -> torch.Tensor:
-        """
-        Calculate anomaly scores using reconstruction error.
-        
-        Args:
-            x: Input tensor (batch_size, seq_len, feature_size)
-            method: Scoring method ('mse', 'mae', 'combined', 'vae')
-            
-        Returns:
-            Anomaly scores tensor
-        """
-        if method == 'vae':
-            _, scores = self.detect_anomaly(x)
-            return scores
-        else:
-            reconstructed = self.reconstruct(x)
-            if method == 'mse':
-                return torch.mean((x - reconstructed) ** 2, dim=(1, 2))
-            elif method == 'mae':
-                return torch.mean(torch.abs(x - reconstructed), dim=(1, 2))
-            elif method == 'combined':
-                mse = torch.mean((x - reconstructed) ** 2, dim=(1, 2))
-                mae = torch.mean(torch.abs(x - reconstructed), dim=(1, 2))
-                return 0.5 * (mse + mae)
-            else:
-                raise ValueError(f"Unknown scoring method: {method}")
-    
-    def compute_loss(self, x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """
-        Compute training loss for LSTM-VAE model.
-        
-        Args:
-            x: Input tensor (batch_size, seq_len, feature_size)
-            criterion: Loss function for reconstruction
-            
-        Returns:
-            Combined loss tensor (reconstruction + KL divergence)
-        """
-        x_decoded, kl_loss = self.forward(x)
-        
-        # Reconstruction loss
-        rec_loss = criterion(x_decoded, x)
-        
-        # Combined VAE loss
-        total_loss = torch.mean(rec_loss) + kl_loss
-        
-        return total_loss

@@ -1,353 +1,423 @@
-# TS-Unity: Time Series Unity Framework
+# TS-Unity: Time Series Unified Framework
 
-A comprehensive and modular framework for time series analysis including forecasting, anomaly detection, imputation, and classification tasks. The framework provides a unified interface for various state-of-the-art models and easy experimentation.
+A comprehensive framework for time series analysis including forecasting, anomaly detection, imputation, and classification.
 
-## 🚀 Features
+## Features
 
-- **Multiple Tasks**: Supports long-term forecasting, short-term forecasting, anomaly detection, imputation, and classification
-- **State-of-the-art Models**: Includes 40+ models like Autoformer, Transformer, TimesNet, PatchTST, and more
-- **Modular Design**: Clean separation of concerns with base classes and interfaces
-- **Configuration Management**: YAML/JSON based configuration system with validation
-- **Comprehensive Logging**: Built-in experiment tracking and monitoring
-- **Extensible Architecture**: Easy to add new models and tasks
-- **Type Safety**: Full type hints and validation throughout the codebase
+- **Multi-Task Support**: Forecasting, Anomaly Detection, Imputation, Classification
+- **Multiple Models**: Autoformer, Transformer, Informer, and more
+- **Type Safety**: Comprehensive type hints throughout the codebase
 - **Error Handling**: Robust error handling and validation
+- **Real-Time Inference**: Streaming inference with sliding window support
+- **Batch Inference**: Process entire datasets efficiently
+- **REST API**: HTTP endpoints for easy integration
+- **Modular Design**: Clean, maintainable architecture
 
-## 📁 Framework Structure
+## Framework Structure
 
 ```
 src/
-├── config/                 # Configuration management
-│   ├── base_config.py      # Base configuration classes with validation
-│   └── __init__.py
-├── core/                   # Core framework components
-│   ├── base_model.py       # Base model interfaces
-│   ├── base_trainer.py     # Enhanced training pipeline with metrics
-│   ├── pipeline.py         # Refactored main training pipeline
-│   └── __init__.py
-├── data_provider/          # Data loading and preprocessing
-│   ├── data_factory.py     # Data factory with unified interface
-│   ├── data_loader.py      # Dataset implementations
-│   └── __init__.py
-├── exp/                    # Experiment implementations
-│   ├── exp_basic.py        # Base experiment class
-│   ├── exp_long_term_forecasting.py
-│   ├── exp_short_term_forecasting.py
-│   ├── exp_anomaly_detection.py
-│   ├── exp_imputation.py
-│   ├── exp_classification.py
-│   └── __init__.py
-├── models/                 # Model implementations
-│   ├── forecasting/        # Forecasting models
-│   ├── anomaly_detection/  # Anomaly detection models
-│   └── __init__.py
-├── layers/                 # Neural network layers
-├── utils/                  # Utility functions
-│   ├── logger.py          # Comprehensive logging system
-│   ├── metrics.py         # Evaluation metrics
-│   ├── anomaly_detection_metrics.py  # Refactored metrics with classes
-│   ├── tools.py           # Helper functions
-│   └── __init__.py
-└── main.py                # Enhanced entry point with error handling
+├── config/
+│   └── base_config.py          # Enhanced configuration management
+├── core/
+│   ├── base_trainer.py         # Enhanced base trainer
+│   └── pipeline.py             # Multi-task inference pipeline
+├── models/                     # Model implementations
+├── utils/
+│   └── anomaly_detection_metrics.py  # Refactored metrics
+├── api/
+│   └── inference_server.py     # FastAPI inference server
+├── scripts/
+│   ├── realtime_inference.py   # Real-time inference demo
+│   ├── batch_inference.py      # Batch inference demo
+│   ├── anomaly_detection_inference.py  # Anomaly detection demo
+│   └── api_client_example.py   # API client example
+└── main.py                     # Enhanced main entry point
 ```
 
-## 🔧 Installation
+## Installation
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/your-username/TS-Unity.git
 cd TS-Unity
 pip install -r requirements.txt
 ```
 
-## 🏃‍♂️ Quick Start
+## REST API Server
 
-### Using Command Line
+TS-Unity now provides a REST API server for easy integration with other systems and applications.
 
-```bash
-# Long-term forecasting with Autoformer
-python src/main.py \
-    --task_name long_term_forecast \
-    --is_training 1 \
-    --model Autoformer \
-    --data ETTh1 \
-    --seq_len 96 \
-    --pred_len 96 \
-    --train_epochs 10
-
-# Anomaly detection with AnomalyTransformer
-python src/main.py \
-    --task_name anomaly_detection \
-    --is_training 1 \
-    --model AnomalyTransformer \
-    --data PSM \
-    --seq_len 100 \
-    --train_epochs 10
-```
-
-### Using Configuration Files
+### Starting the API Server
 
 ```bash
-# Using YAML configuration
-python src/main.py --config_file configs/example_forecasting.yaml
+# Start the server
+python src/api/inference_server.py --host 0.0.0.0 --port 8000
 
-# Using JSON configuration
-python src/main.py --config_file configs/example_anomaly.json
+# Or with auto-reload for development
+python src/api/inference_server.py --reload
 ```
 
-### Programmatic Usage
+### API Endpoints
+
+#### Health Check
+```bash
+GET /health
+```
+
+#### Load Model
+```bash
+POST /load_model
+{
+    "task_type": "anomaly_detection",
+    "checkpoint_path": "/path/to/checkpoint.pth",
+    "config_overrides": {
+        "seq_len": 100,
+        "enc_in": 7
+    }
+}
+```
+
+#### Forecasting Inference
+```bash
+POST /forecast
+{
+    "task_type": "forecasting",
+    "data": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], ...],
+    "num_steps": 24,
+    "window_size": 100,
+    "stride": 10
+}
+```
+
+#### Anomaly Detection
+```bash
+POST /detect_anomalies
+{
+    "task_type": "anomaly_detection",
+    "data": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], ...],
+    "threshold": 0.8,
+    "window_size": 100,
+    "stride": 10
+}
+```
+
+#### Generic Inference
+```bash
+POST /inference
+{
+    "task_type": "imputation",
+    "data": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], ...],
+    "window_size": 100,
+    "stride": 10
+}
+```
+
+#### File-based Inference
+```bash
+POST /inference/file?file_path=data.csv&task_type=forecasting&num_steps=24
+```
+
+#### Model Information
+```bash
+GET /model/info
+```
+
+#### Unload Model
+```bash
+DELETE /model
+```
+
+### API Client Example
 
 ```python
-from config.base_config import ForecastingConfig
-from core.pipeline import TrainingPipeline
+from src.scripts.api_client_example import TSUnityAPIClient
+
+# Initialize client
+client = TSUnityAPIClient("http://localhost:8000")
+
+# Load model
+client.load_model("anomaly_detection", "/path/to/checkpoint.pth")
+
+# Run anomaly detection
+result = client.run_anomaly_detection(
+    data=[[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], ...],
+    threshold=0.8
+)
+
+print(f"Anomalies detected: {result['anomalies_detected']}")
+print(f"Anomaly rate: {result['anomaly_rate']:.2f}%")
+```
+
+### Interactive API Documentation
+
+Once the server is running, you can access:
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+
+## Real-Time Inference
+
+TS-Unity supports real-time streaming inference for live time series data.
+
+### Python API Usage
+
+```python
+from src.core.pipeline import InferencePipeline, RealTimeInferenceManager
+from src.config.base_config import ForecastingConfig
 
 # Create configuration
 config = ForecastingConfig(
-    task_name='long_term_forecast',
+    task_name='short_term_forecast',
     model='Autoformer',
-    data='ETTh1',
-    seq_len=96,
-    pred_len=96,
-    train_epochs=10
+    seq_len=100,
+    enc_in=7,
+    dec_in=7,
+    c_out=7,
+    pred_len=24
 )
 
-# Create and run pipeline
-pipeline = TrainingPipeline(config, use_wandb=False)
-results = pipeline.run_training()
+# Initialize inference pipeline
+pipeline = InferencePipeline(config, checkpoint_path='model.pth')
+
+# Add real-time data points
+pipeline.add_data_point([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
+
+# Get predictions
+predictions = pipeline.predict_next(num_steps=12)
 ```
 
-## 🆕 Recent Improvements (v2.0)
-
-### Code Quality & Structure
-- **Complete Type Hints**: Added comprehensive type annotations throughout the codebase
-- **Class-based Organization**: Refactored utility functions into logical classes
-- **Enhanced Error Handling**: Improved exception handling and validation
-- **Better Documentation**: Comprehensive docstrings and inline documentation
-
-### Configuration Management
-- **Validation**: Added parameter validation with meaningful error messages
-- **Enums**: Introduced enums for better type safety (TaskType, FeatureType, etc.)
-- **Metadata**: Added metadata fields for better documentation
-- **Flexible Loading**: Enhanced YAML/JSON loading with error handling
-
-### Training Pipeline
-- **Task Registry**: Centralized task management with registry pattern
-- **Metrics Tracking**: Enhanced training metrics and validation
-- **Checkpoint Management**: Improved checkpoint saving/loading
-- **Resource Management**: Better GPU memory management and cleanup
-
-### Metrics & Evaluation
-- **Organized Metrics**: Grouped related metrics into logical classes
-- **Constants**: Replaced magic numbers with named constants
-- **Backward Compatibility**: Maintained existing function interfaces
-- **Enhanced Logging**: Better progress tracking and debugging
-
-## 📊 Supported Tasks
-
-### 1. Long-term Forecasting
-- **Models**: Autoformer, Transformer, TimesNet, iTransformer, Koopa, TiDE, FreTS
-- **Datasets**: ETTh1, ETTh2, ETTm1, ETTm2, Electricity, Traffic, Weather, ILI
-- **Features**: Multivariate (M), Univariate (S), Mixed (MS)
-
-### 2. Short-term Forecasting
-- **Models**: Same as long-term forecasting
-- **Use Case**: Short-horizon predictions (1-24 steps ahead)
-
-### 3. Anomaly Detection
-- **Models**: AnomalyTransformer, OmniAnomaly, USAD, DAGMM
-- **Datasets**: PSM, MSL, SMAP, SMD, SWaT, WADI
-- **Metrics**: F1-score, Precision, Recall, AUROC, AUPRC
-
-### 4. Imputation
-- **Models**: BRITS, SAITS, Transformer, TimesNet
-- **Datasets**: Same as forecasting datasets
-- **Features**: Random masking, structured masking
-
-### 5. Classification
-- **Models**: Transformer, TimesNet, TCN, ResNet
-- **Datasets**: UCR, UEA, HAR, SleepEDF
-- **Metrics**: Accuracy, F1-score, Precision, Recall
-
-## 🛠️ Configuration
-
-### Base Configuration
-```python
-@dataclass
-class BaseConfig:
-    # Task configuration
-    task_name: str = 'long_term_forecast'
-    is_training: bool = True
-    model: str = 'Autoformer'
-    
-    # Data configuration
-    data: str = 'ETTh1'
-    seq_len: int = 96
-    pred_len: int = 96
-    
-    # Model architecture
-    d_model: int = 512
-    n_heads: int = 8
-    e_layers: int = 2
-    d_layers: int = 1
-    
-    # Training configuration
-    train_epochs: int = 10
-    batch_size: int = 32
-    learning_rate: float = 0.0001
-```
-
-### Task-Specific Configurations
-```python
-@dataclass
-class ForecastingConfig(BaseConfig):
-    inverse: bool = False
-    scale: bool = True
-    time_encoding: bool = True
-
-@dataclass
-class AnomalyDetectionConfig(BaseConfig):
-    anomaly_ratio: float = 0.25
-    win_size: int = 100
-    threshold_method: str = 'percentile'
-```
-
-## 🔍 Metrics & Evaluation
-
-### Forecasting Metrics
-- **MAE**: Mean Absolute Error
-- **MSE**: Mean Squared Error
-- **RMSE**: Root Mean Squared Error
-- **MAPE**: Mean Absolute Percentage Error
-- **MSPE**: Mean Squared Percentage Error
-
-### Anomaly Detection Metrics
-```python
-from utils.anomaly_detection_metrics import (
-    AnomalyMetrics, PointMetrics, ThresholdOptimization,
-    SequenceMetrics, AdvancedMetrics
-)
-
-# Basic metrics
-mae = AnomalyMetrics.mae(predictions, targets)
-mse = AnomalyMetrics.mse(predictions, targets)
-
-# Point-wise metrics
-f1, precision, recall, tp, tn, fp, fn = PointMetrics.calc_point2point(
-    predictions, targets
-)
-
-# Threshold optimization
-best_metrics, best_threshold = ThresholdOptimization.bf_search(
-    scores, labels, start=0.1, end=0.9, step_num=100
-)
-```
-
-## 🚀 Advanced Usage
-
-### Custom Model Integration
-```python
-from core.base_model import BaseModel
-
-class CustomModel(BaseModel):
-    def __init__(self, config):
-        super().__init__(config)
-        # Your model implementation
-        
-    def forward(self, x):
-        # Forward pass implementation
-        pass
-```
-
-### Custom Trainer
-```python
-from core.base_trainer import BaseTrainer
-
-class CustomTrainer(BaseTrainer):
-    def train_epoch(self, epoch: int) -> TrainingMetrics:
-        # Custom training logic
-        pass
-        
-    def validate_epoch(self, epoch: int) -> ValidationMetrics:
-        # Custom validation logic
-        pass
-```
-
-### Custom Configuration
-```python
-@dataclass
-class CustomConfig(BaseConfig):
-    custom_param: str = 'default_value'
-    
-    def __post_init__(self):
-        super().__post_init__()
-        # Custom validation
-        if self.custom_param == 'invalid':
-            raise ValueError("Invalid custom_param value")
-```
-
-## 📝 Logging & Monitoring
-
-### Built-in Logging
-```python
-import logging
-
-# Configure logging level
-logging.basicConfig(level=logging.INFO)
-
-# Use framework logger
-logger = logging.getLogger(__name__)
-logger.info("Training started")
-logger.warning("Low learning rate detected")
-logger.error("Training failed")
-```
-
-### Weights & Biases Integration
-```bash
-python src/main.py --use_wandb --task_name long_term_forecast
-```
-
-## 🧪 Testing
+### Command Line Usage
 
 ```bash
-# Run all tests
-python -m pytest tests/
+# Real-time inference demo
+python src/scripts/realtime_inference.py --checkpoint_path model.pth --mode interactive
 
-# Run specific test categories
-python -m pytest tests/test_models/
-python -m pytest tests/test_metrics/
-python -m pytest tests/test_config/
+# Simulate streaming data
+python src/scripts/realtime_inference.py --checkpoint_path model.pth --mode simulation
+
+# Stream from CSV file
+python src/scripts/realtime_inference.py --checkpoint_path model.pth --mode csv --input_file data.csv
 ```
 
-## 🤝 Contributing
+## Batch Inference
+
+TS-Unity supports efficient batch inference for processing large datasets.
+
+### Python API Usage
+
+```python
+# Single sequence inference
+predictions = pipeline.predict_batch(sequence_data, num_steps=24)
+
+# Multiple sequences
+batch_predictions = pipeline.predict_batch(batch_data, num_steps=24)
+
+# Sliding window on long series
+results = pipeline.predict_with_sliding_window(
+    long_series, 
+    window_size=100, 
+    stride=10, 
+    num_steps=24
+)
+
+# File-based inference
+results = pipeline.predict_from_file(
+    'data.csv', 
+    num_steps=24, 
+    output_path='predictions.csv'
+)
+```
+
+### Command Line Usage
+
+```bash
+# Single sequence inference
+python src/scripts/batch_inference.py --checkpoint_path model.pth --mode single
+
+# Batch inference
+python src/scripts/batch_inference.py --checkpoint_path model.pth --mode batch --batch_size 10
+
+# Sliding window inference
+python src/scripts/batch_inference.py --checkpoint_path model.pth --mode sliding --data_length 1000
+
+# File-based inference
+python src/scripts/batch_inference.py --checkpoint_path model.pth --mode file --input_file data.csv
+
+# Performance benchmark
+python src/scripts/batch_inference.py --checkpoint_path model.pth --mode benchmark
+```
+
+## Anomaly Detection
+
+TS-Unity now supports anomaly detection inference with dedicated methods and analysis.
+
+### Anomaly Detection Approaches
+
+TS-Unity supports two different approaches to anomaly detection:
+
+#### 1. **Reconstruction-based Anomaly Detection**
+- **Models**: AnomalyTransformer, OmniAnomaly, USAD, DAGMM, AutoEncoder, VAE
+- **Method**: Compares input with reconstructed output
+- **Anomaly Score**: Reconstruction error (higher = more anomalous)
+- **Best for**: Detecting structural anomalies, pattern changes, distribution shifts
+- **How it works**: The model learns to reconstruct normal patterns, and anomalies have higher reconstruction errors
+
+#### 2. **Prediction-based Anomaly Detection**
+- **Models**: Autoformer, Transformer, TimesNet, and other forecasting models
+- **Method**: Analyzes prediction patterns and variance
+- **Anomaly Score**: Prediction variance or error (higher = more anomalous)
+- **Best for**: Detecting temporal anomalies, trend changes, unexpected patterns
+- **How it works**: Uses forecasting models to predict future values and detects anomalies based on prediction confidence
+
+### Automatic Method Selection
+
+The system automatically selects the appropriate detection method based on the model type:
+
+```python
+# Reconstruction-based detection (e.g., AnomalyTransformer)
+config = AnomalyDetectionConfig(
+    task_name='anomaly_detection',
+    model='AnomalyTransformer',  # Reconstruction model
+    seq_len=100,
+    enc_in=7
+)
+
+# Prediction-based detection (e.g., Autoformer)
+config = ForecastingConfig(
+    task_name='anomaly_detection',
+    model='Autoformer',  # Forecasting model
+    seq_len=100,
+    enc_in=7
+)
+```
+
+### Enhanced Experiment Classes
+
+The experiment classes now support both approaches:
+
+#### **Exp_Anomaly_Detection**
+- **Reconstruction-based**: Uses `_reconstruction_based_scoring()` for models like AnomalyTransformer
+- **Prediction-based**: Uses `_prediction_based_scoring()` for forecasting models
+- **Automatic selection**: Detects model type and applies appropriate method
+- **Method information**: Saves detection method details in results
+
+#### **Exp_Long_Term_Forecast & Exp_Short_Term_Forecast**
+- **Forecasting**: Primary functionality for time series prediction
+- **Anomaly detection**: Secondary functionality using prediction-based approach
+- **Dual purpose**: Can be used for both forecasting and anomaly detection
+- **Flexible input**: Handles various model architectures (Linear, TST, Transformer-based)
+
+### Usage Examples
+
+```python
+# Using forecasting model for anomaly detection
+from exp.exp_long_term_forecasting import Exp_Long_Term_Forecast
+
+exp = Exp_Long_Term_Forecast(args)
+exp.model.load_state_dict(torch.load('forecasting_model.pth'))
+
+# Anomaly detection using prediction-based method
+anomaly_scores = exp.detect_anomaly(input_data)
+
+# Regular forecasting
+predictions = exp.predict_single(input_data, num_steps=24)
+```
+
+### Python API Usage
+
+```python
+from src.config.base_config import AnomalyDetectionConfig
+
+# Create anomaly detection configuration
+config = AnomalyDetectionConfig(
+    task_name='anomaly_detection',
+    model='AnomalyTransformer',
+    seq_len=100,
+    enc_in=7,
+    dec_in=7,
+    c_out=7,
+    anomaly_ratio=0.1,
+    win_size=100
+)
+
+# Initialize inference pipeline
+pipeline = InferencePipeline(config, checkpoint_path='anomaly_model.pth')
+
+# Run anomaly detection
+anomaly_scores = pipeline.predict_batch(sequence_data, num_steps=1)
+
+# Analyze results
+print(f"Anomaly scores shape: {anomaly_scores.shape}")
+```
+
+### Command Line Usage
+
+```bash
+# Single sequence anomaly detection
+python src/scripts/anomaly_detection_inference.py --checkpoint_path anomaly_model.pth --mode single
+
+# Batch anomaly detection
+python src/scripts/anomaly_detection_inference.py --checkpoint_path anomaly_model.pth --mode batch --batch_size 10
+
+# Sliding window anomaly detection
+python src/scripts/anomaly_detection_inference.py --checkpoint_path anomaly_model.pth --mode sliding --data_length 1000
+
+# File-based anomaly detection
+python src/scripts/anomaly_detection_inference.py --checkpoint_path anomaly_model.pth --mode file --input_file data.csv
+
+# Performance benchmark
+python src/scripts/anomaly_detection_inference.py --checkpoint_path anomaly_model.pth --mode benchmark
+```
+
+## Data Format Requirements
+
+### Input Data
+- **Real-time**: Single data points as 1D arrays
+- **Batch**: 2D arrays (time_steps, features) or 3D arrays (batch_size, time_steps, features)
+- **File**: CSV, NPY, or NPZ files
+
+### Output Data
+- **Forecasting**: Predictions for specified number of steps ahead
+- **Anomaly Detection**: Anomaly scores for each time step
+- **Imputation**: Imputed values
+- **Classification**: Class probabilities
+
+## Performance Tips
+
+### Real-Time Inference
+- Use appropriate buffer size for your use case
+- Consider batch processing for multiple data points
+- Monitor memory usage with large buffers
+
+### Batch Inference
+- Use sliding window for very long time series
+- Adjust stride based on your requirements
+- Consider parallel processing for large batches
+
+### API Usage
+- Keep models loaded for multiple requests
+- Use appropriate batch sizes for your data
+- Monitor API response times
+
+## Examples
+
+See the `src/scripts/` directory for comprehensive examples:
+- `realtime_inference.py`: Real-time streaming examples
+- `batch_inference.py`: Batch processing examples
+- `anomaly_detection_inference.py`: Anomaly detection examples
+- `api_client_example.py`: API usage examples
+
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes with proper type hints and documentation
-4. Add tests for new functionality
+3. Make your changes
+4. Add tests if applicable
 5. Submit a pull request
 
-### Code Style Guidelines
-- Use type hints for all function parameters and return values
-- Follow PEP 8 style guidelines
-- Add comprehensive docstrings
-- Include error handling and validation
-- Write unit tests for new features
+## License
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Original model implementations from various research papers
-- PyTorch community for the excellent deep learning framework
-- Contributors and users of the framework
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/discussions)
-- **Documentation**: [Wiki](https://github.com/your-repo/wiki)
+This project is licensed under the MIT License - see the LICENSE file for details.
 
 ---
 
-**TS-Unity v2.0** - A modern, type-safe, and well-structured time series analysis framework.
+**TS-Unity v2.0** - Enhanced with type safety, error handling, real-time inference, batch processing, and REST API support.
