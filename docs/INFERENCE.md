@@ -95,16 +95,16 @@ import numpy as np
 from core.pipeline import InferencePipeline
 from config.base_config import ForecastingConfig
 
-config = ForecastingConfig(task_name='long_term_forecast', model='Autoformer',
-                           seq_len=96, pred_len=24, enc_in=7, dec_in=7, c_out=7)
-pipeline = InferencePipeline(config, checkpoint_path='checkpoints/autoformer.pth')
+config = ForecastingConfig(task_name='long_term_forecast', model='Autoformer', data='semiconductor',
+                           seq_len=96, pred_len=24, enc_in=6, dec_in=6, c_out=6)
+pipeline = InferencePipeline(config, checkpoint_path='checkpoints/semiconductor/autoformer.pth')
 
-sequence = np.asarray(sequence, dtype='float32')  # (96, 7)
-pred = pipeline.predict_batch(sequence, num_steps=24)  # (1, 24, 7)
+sequence = np.asarray(sequence, dtype='float32')  # (96, 6)
+pred = pipeline.predict_batch(sequence, num_steps=24)  # (1, 24, 6)
 
-long_series = np.asarray(long_series, dtype='float32')  # (T, 7)
+long_series = np.asarray(long_series, dtype='float32')  # (T, 6)
 res = pipeline.predict_with_sliding_window(long_series, window_size=96, stride=10, num_steps=24)
-# res['predictions'] shape: (N, 1, 24, 7)
+# res['predictions'] shape: (N, 1, 24, 6)
 ```
 
 ---
@@ -137,18 +137,18 @@ from core.pipeline import InferencePipeline
 from config.base_config import AnomalyDetectionConfig, ForecastingConfig
 
 # Reconstruction-based
-cfg_rec = AnomalyDetectionConfig(task_name='anomaly_detection', model='AnomalyTransformer',
-                                 seq_len=100, enc_in=7, dec_in=7, c_out=7)
-pip_rec = InferencePipeline(cfg_rec, checkpoint_path='checkpoints/anom_trans.pth')
-seq = np.asarray(seq, dtype='float32')  # (100, 7)
+cfg_rec = AnomalyDetectionConfig(task_name='anomaly_detection', model='AnomalyTransformer', data='semiconductor',
+                                 seq_len=100, enc_in=6, dec_in=6, c_out=6)
+pip_rec = InferencePipeline(cfg_rec, checkpoint_path='checkpoints/semiconductor/anom_trans.pth')
+seq = np.asarray(seq, dtype='float32')  # (100, 6)
 scores_rec = pip_rec.predict_batch(seq)  # (1, 100)
 
 # Prediction-based
-cfg_pred = ForecastingConfig(task_name='anomaly_detection', model='Autoformer',
-                             seq_len=96, pred_len=24, enc_in=7, dec_in=7, c_out=7)
-pip_pred = InferencePipeline(cfg_pred, checkpoint_path='checkpoints/autoformer.pth')
-seq2 = np.asarray(seq2, dtype='float32')  # (96, 7)
-scores_pred = pip_pred.predict_batch(seq2)  # (1, 1, 7)
+cfg_pred = ForecastingConfig(task_name='anomaly_detection', model='Autoformer', data='semiconductor',
+                             seq_len=96, pred_len=1, enc_in=6, dec_in=6, c_out=6)
+pip_pred = InferencePipeline(cfg_pred, checkpoint_path='checkpoints/semiconductor/autoformer.pth')
+seq2 = np.asarray(seq2, dtype='float32')  # (96, 6)
+scores_pred = pip_pred.predict_batch(seq2)  # (1, 1)
 
 series = np.asarray(series, dtype='float32')
 res = pip_pred.predict_with_sliding_window(series, window_size=96, stride=10)
@@ -173,7 +173,7 @@ method = res.get('detection_method', {})
   - 슬라이딩: dict(`predictions` = `(N, 1, num_steps, C)`, 기타 메타)
 - **Anomaly Detection**
   - Reconstruction-based: `(B, seq_len)`
-  - Prediction-based: `(B, 1, C)`
+  - Prediction-based: `(B, 1)`
   - 슬라이딩: dict(`predictions` = 위 점수 텐서가 윈도우 축 `N`으로 누적, `detection_method` 포함)
 
 ---
