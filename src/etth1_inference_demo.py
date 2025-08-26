@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ETTh1 Dataset Inference Demo
+ETTh1 Dataset Inference Demo with PatchTST Model
 
 This script demonstrates how to:
-1. Load a trained checkpoint for ETTh1 forecasting
+1. Load a trained PatchTST checkpoint for ETTh1 forecasting
 2. Load a subset of ETTh1 data
 3. Perform inference using the loaded model
 4. Visualize and analyze the results
@@ -62,16 +62,15 @@ def load_etth1_subset(data_path: str, start_idx: int = 0, num_samples: int = 100
     return subset_data, subset_timestamps
 
 
-def create_inference_config() -> ForecastingConfig:
+def create_patchtst_inference_config() -> ForecastingConfig:
     """
-    Create inference configuration based on the trained model.
+    Create inference configuration for PatchTST model based on the trained model.
     
     Returns:
         ForecastingConfig object
     """
     config = ForecastingConfig(
-        task_name='long_term_forecast',
-        model='DLinear',
+        model='PatchTST',
         data='ETTh1',
         seq_len=96,
         label_len=48,
@@ -82,18 +81,34 @@ def create_inference_config() -> ForecastingConfig:
         features='M',
         target='OT',
         scale=True,
-        timeenc=0,
         freq='h',
         use_gpu=True,
-        gpu=0
+        gpu=0,
+        # PatchTST specific parameters
+        d_model=128,
+        n_heads=8,
+        e_layers=3,
+        d_layers=1,
+        d_ff=256,
+        moving_avg=25,
+        factor=3,
+        distil=True,
+        dropout=0.1,
+        embed='timeF',
+        activation='gelu'
     )
     
-    print(f"Inference config created:")
+    # Set task_name after creation
+    config.task_name = 'long_term_forecast'
+    
+    print(f"PatchTST inference config created:")
     print(f"  Model: {config.model}")
     print(f"  Sequence length: {config.seq_len}")
     print(f"  Prediction length: {config.pred_len}")
     print(f"  Input features: {config.enc_in}")
     print(f"  Output features: {config.c_out}")
+    print(f"  D-Model: {config.d_model}")
+    print(f"  E-Layers: {config.e_layers}")
     
     return config
 
@@ -103,7 +118,7 @@ def perform_inference(pipeline: InferencePipeline,
                      timestamps: pd.Series,
                      num_steps: int = 96) -> Dict[str, Any]:
     """
-    Perform inference using the loaded pipeline.
+    Perform inference using the loaded PatchTST pipeline.
     
     Args:
         pipeline: Loaded inference pipeline
@@ -174,7 +189,7 @@ def visualize_results(results: Dict[str, Any], save_path: str = None):
     
     # Create figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(15, 10))
-    fig.suptitle('ETTh1 Inference Results', fontsize=16)
+    fig.suptitle('ETTh1 Inference Results with PatchTST Model', fontsize=16)
     
     # Plot 1: Input data (first few features)
     ax1 = axes[0, 0]
@@ -201,7 +216,7 @@ def visualize_results(results: Dict[str, Any], save_path: str = None):
         for i in range(min(3, single_pred.shape[2])):
             ax2.plot(future_times, single_pred[0, :, i], 
                     label=f'Predicted Feature {i+1}', linestyle='--', marker='o')
-        ax2.set_title('Single Sequence Prediction')
+        ax2.set_title('Single Sequence Prediction (PatchTST)')
         ax2.set_xlabel('Time')
         ax2.set_ylabel('Value')
         ax2.legend()
@@ -259,14 +274,14 @@ def visualize_results(results: Dict[str, Any], save_path: str = None):
 
 
 def main():
-    """Main function to run the ETTh1 inference demo."""
+    """Main function to run the ETTh1 inference demo with PatchTST model."""
     print("=" * 60)
-    print("ETTh1 Dataset Inference Demo")
+    print("ETTh1 Dataset Inference Demo with PatchTST Model")
     print("=" * 60)
     
     # Configuration
     data_path = "../datasets/ETT-small/ETTh1.csv"
-    checkpoint_path = "../checkpoints/DLinear_ETTh1_96_96/checkpoint.pth"
+    checkpoint_path = "checkpoints/PatchTST_ETTh1_96_96/checkpoint.pth"
     
     # Check if files exist
     if not Path(data_path).exists():
@@ -276,15 +291,15 @@ def main():
     
     if not Path(checkpoint_path).exists():
         print(f"Error: Checkpoint file not found: {checkpoint_path}")
-        print("Please ensure the checkpoint.pth file exists in the checkpoints/DLinear_ETTh1_96_96/ directory")
+        print("Please ensure the checkpoint.pth file exists in the checkpoints/PatchTST_ETTh1_96_96/ directory")
         return
     
     try:
-        # Step 1: Create inference configuration
-        config = create_inference_config()
+        # Step 1: Create PatchTST inference configuration
+        config = create_patchtst_inference_config()
         
         # Step 2: Load inference pipeline
-        print(f"\nLoading inference pipeline from: {checkpoint_path}")
+        print(f"\nLoading PatchTST inference pipeline from: {checkpoint_path}")
         pipeline = InferencePipeline(config, checkpoint_path)
         print("Pipeline loaded successfully!")
         
@@ -301,13 +316,13 @@ def main():
         # Step 5: Visualize results
         output_dir = Path("../results/inference")
         output_dir.mkdir(parents=True, exist_ok=True)
-        save_path = output_dir / "etth1_inference_results.png"
+        save_path = output_dir / "etth1_patchtst_inference_results.png"
         
         visualize_results(results, save_path=str(save_path))
         
         # Step 6: Print summary statistics
         print("\n" + "=" * 60)
-        print("INFERENCE SUMMARY")
+        print("PATCHTST INFERENCE SUMMARY")
         print("=" * 60)
         print(f"Input data shape: {data.shape}")
         print(f"Time range: {timestamps.iloc[0]} to {timestamps.iloc[-1]}")
@@ -325,7 +340,7 @@ def main():
             print(f"Total predictions: {sliding['predictions'].shape}")
         
         print(f"\nResults saved to: {save_path}")
-        print("Inference demo completed successfully!")
+        print("PatchTST inference demo completed successfully!")
         
     except Exception as e:
         print(f"Error during inference: {e}")

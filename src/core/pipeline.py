@@ -125,8 +125,8 @@ class InferencePipeline:
         # Create experiment
         self.experiment = self._create_experiment()
         
-        # Load model if checkpoint provided
-        if self.checkpoint_path:
+        # Load model if checkpoint provided and load_checkpoint is True
+        if self.checkpoint_path and hasattr(self.config, 'load_checkpoint') and self.config.load_checkpoint:
             self._load_model()
         
         # Initialize data buffer
@@ -1030,6 +1030,15 @@ class ConfigManager:
             '--checkpoints', type=str, default='./checkpoints/',
             help='Location of model checkpoints'
         )
+        parser.add_argument(
+            '--load_checkpoint', action='store_true', default=False,
+            help='Whether to load existing checkpoint (default: False - train from scratch)'
+        )
+        parser.add_argument(
+            '--scale_method', type=str, default='standard',
+            choices=['standard', 'minmax', 'minmax_square', 'minmax_m1p1'],
+            help='Scaling method for datasets'
+        )
         
         # Sequence configuration
         parser.add_argument(
@@ -1101,6 +1110,23 @@ class ConfigManager:
         parser.add_argument(
             '--dropout', type=float, default=0.1,
             help='Dropout rate'
+        )
+        parser.add_argument(
+            '--rnn_type', type=str, default='LSTM',
+            choices=['LSTM', 'GRU'],
+            help='RNN type for LSTM-AE model'
+        )
+        parser.add_argument(
+            '--rnn_inp_size', type=int, default=16,
+            help='RNN input size for LSTM-AE model'
+        )
+        parser.add_argument(
+            '--rnn_hid_size', type=int, default=16,
+            help='RNN hidden size for LSTM-AE model'
+        )
+        parser.add_argument(
+            '--nlayers', type=int, default=2,
+            help='Number of layers'
         )
         parser.add_argument(
             '--embed', type=str, default='timeF',

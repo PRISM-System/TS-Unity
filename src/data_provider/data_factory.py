@@ -4,9 +4,62 @@ from typing import Tuple, List
 import pandas as pd
 import numpy as np
 from pathlib import Path
-
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from config.base_config import BaseConfig
-from utils.tools import StandardScaler
+# from utils.tools import StandardScaler
+
+class DataScaler:
+    """데이터 스케일링을 담당하는 클래스"""
+    
+    def __init__(self, scale_method: str):
+        """
+        Args:
+            scale_method: 스케일링 방법 ('minmax', 'minmax_square', 'minmax_m1p1', 'standard')
+        """
+        self.scale_method = scale_method
+        self.scaler = None
+        
+    def fit_transform(self, train_data: np.ndarray, val_data: np.ndarray, 
+                     test_data: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        데이터를 스케일링합니다.
+        
+        Args:
+            train_data: 학습 데이터
+            val_data: 검증 데이터
+            test_data: 테스트 데이터
+            
+        Returns:
+            스케일링된 데이터 튜플 (train, val, test)
+        """
+        if self.scale_method == 'minmax':
+            self.scaler = MinMaxScaler(feature_range=(-1, 1))
+            train_scaled = self.scaler.fit_transform(train_data)
+            val_scaled = self.scaler.transform(val_data)
+            test_scaled = self.scaler.transform(test_data)
+            
+        elif self.scale_method == 'minmax_square':
+            self.scaler = MinMaxScaler()
+            train_scaled = self.scaler.fit_transform(train_data) ** 2
+            val_scaled = self.scaler.transform(val_data) ** 2
+            test_scaled = self.scaler.transform(test_data) ** 2
+            
+        elif self.scale_method == 'minmax_m1p1':
+            train_scaled = 2 * (train_data / train_data.max(axis=0)) - 1
+            val_scaled = 2 * (val_data / val_data.max(axis=0)) - 1
+            test_scaled = 2 * (test_data / test_data.max(axis=0)) - 1
+            
+        elif self.scale_method == 'standard':
+            self.scaler = StandardScaler()
+            train_scaled = self.scaler.fit_transform(train_data)
+            val_scaled = self.scaler.transform(val_data)
+            test_scaled = self.scaler.transform(test_data)
+            
+        else:
+            raise ValueError(f"지원하지 않는 스케일링 방법: {self.scale_method}")
+            
+        print(f'{self.scale_method} 정규화 완료')
+        return train_scaled, val_scaled, test_scaled
 
 
 class _SyntheticTimeSeriesDataset(Dataset):
@@ -75,6 +128,8 @@ class DataFactory:
             dataset = _WeatherDataset(self.args, flag=flag)
         elif str(self.args.data).lower() in { 'swat' }:
             dataset = _SWaTDataset(self.args, flag=flag)
+        elif str(self.args.data).lower() in { 'psm' }:
+            dataset = _PSMDataset(self.args, flag=flag)
         else:
             # Fallback synthetic data
             length = 800 if flag == 'train' else 200
@@ -157,16 +212,18 @@ class _ETTDataset(Dataset):
             cols_data = df_raw.columns[1:]
             df_data = df_raw[cols_data]
 
-        # Scaling
+        # Scaling via DataScaler (fit on train, apply to val/test)
+        data_full = df_data.values.astype(np.float32)
         if self.scale:
-            train_data = df_data[border1s[0]:border2s[0]]
-            train_values = train_data.values
-            mean = train_values.mean(axis=0)
-            std = train_values.std(axis=0) + 1e-8
-            self.scaler = StandardScaler(mean, std)
-            data = self.scaler.transform(df_data.values)
+            train_vals = data_full[border1s[0]:border2s[0]]
+            val_vals = data_full[border1s[1]:border2s[1]]
+            test_vals = data_full[border1s[2]:border2s[2]]
+            scaler = DataScaler(getattr(self.args, 'scale_method', 'standard'))
+            train_scaled, val_scaled, test_scaled = scaler.fit_transform(train_vals, val_vals, test_vals)
+            data = np.concatenate([train_scaled, val_scaled, test_scaled], axis=0)
+            self.scaler = None
         else:
-            data = df_data.values
+            data = data_full
             self.scaler = None
 
         # Time features
@@ -239,6 +296,137 @@ class _ETTDataset(Dataset):
         if self.scaler is not None:
             return self.scaler.inverse_transform(data)
         return data
+
+
+class _PSMDataset(Dataset):
+    """PSM dataset loader for anomaly detection."""
+    
+    def __init__(self, args: BaseConfig, flag: str):
+        self.args = args
+        self.flag = flag
+        
+        # PSM 데이터 경로 설정
+        if flag == 'train':
+            data_path = Path(args.root_path) / 'train.csv'
+            label_path = Path(args.root_path) / 'train_label.csv'
+        elif flag == 'val':
+            data_path = Path(args.root_path) / 'train.csv'  # validation은 train 데이터의 일부 사용
+            label_path = Path(args.root_path) / 'train_label.csv'
+        else:  # test
+            data_path = Path(args.root_path) / 'test.csv'
+            label_path = Path(args.root_path) / 'test_label.csv'
+        
+        # 데이터 로드
+        self.data = pd.read_csv(data_path)
+        self.label_data = pd.read_csv(label_path)
+        
+        # 특성 선택 (첫 번째 컬럼은 timestamp_(min)이므로 제외)
+        feature_cols = [col for col in self.data.columns if col != 'timestamp_(min)']
+        self.features = self.data[feature_cols].values
+        
+        # 라벨 처리 - 연속값을 이진값으로 변환
+        if 'attack' in self.label_data.columns:
+            # attack 컬럼이 있는 경우
+            raw_labels = self.label_data['attack'].values
+        else:
+            # attack 컬럼이 없는 경우, 첫 번째 컬럼 사용
+            raw_labels = self.label_data.iloc[:, 1].values
+        
+        # 연속값을 이진값으로 변환 (임계값 기반)
+        # threshold = np.percentile(raw_labels, 95)  # 95th percentile을 임계값으로 사용
+        # self.binary_labels = (raw_labels > threshold).astype(int)
+        self.binary_labels = (raw_labels > 0).astype(int)
+        
+        # 시퀀스 길이 설정
+        self.seq_len = args.seq_len
+        self.feature_num = len(feature_cols)
+        
+        # USAD 모델을 위한 차원 설정
+        self.win_size = self.seq_len
+        self.enc_in = self.feature_num
+        self.window_size = self.seq_len  # USAD 모델 호환성
+        self.feature_num = self.feature_num  # USAD 모델 호환성
+        
+        # 데이터 정규화: DataScaler 사용 (train에 fit, split별 적용)
+        scale_method = getattr(self.args, 'scale_method', 'standard')
+        train_csv = pd.read_csv(Path(args.root_path) / 'train.csv')
+        test_csv = pd.read_csv(Path(args.root_path) / 'test.csv')
+        train_feats_all = train_csv[feature_cols].values.astype(np.float32)
+        # val은 train 분포 사용
+        val_feats_all = train_feats_all
+        test_feats_all = test_csv[feature_cols].values.astype(np.float32)
+        ds = DataScaler(scale_method)
+        train_scaled_all, val_scaled_all, test_scaled_all = ds.fit_transform(
+            train_feats_all, val_feats_all, test_feats_all
+        )
+        if flag == 'train':
+            self.features = train_scaled_all.astype(np.float32)
+        elif flag == 'val':
+            self.features = val_scaled_all.astype(np.float32)
+        else:
+            self.features = test_scaled_all.astype(np.float32)
+        
+        # BuildDataset과 유사한 방식으로 유효한 윈도우 인덱스 생성
+        self.valid_idxs = self._generate_valid_indices()
+        
+        print(f"PSM {flag} dataset - 유효한 윈도우 수: {len(self.valid_idxs)}")
+        print(f"특성 수: {self.feature_num}, 시퀀스 길이: {self.seq_len}")
+    
+    def _generate_valid_indices(self) -> List[int]:
+        """유효한 윈도우 인덱스를 생성합니다."""
+        valid_idxs = []
+        
+        # argument의 seq_len을 기반으로 stride 계산
+        # train/validation은 stride=seq_len//2, test는 stride=seq_len으로 설정
+        if self.flag in ['train', 'val']:
+            slide_size = self.seq_len // 2  # 오버랩 (100//2 = 50)
+        else:  # test
+            slide_size = self.seq_len  # 오버랩 없음 (100)
+        
+        for i in range(0, len(self.features) - self.seq_len + 1, slide_size):
+            valid_idxs.append(i)
+            
+        return valid_idxs
+    
+    def __len__(self):
+        return len(self.valid_idxs)
+    
+    def __getitem__(self, idx):
+        if idx >= len(self.valid_idxs):
+            raise IndexError(f"인덱스 {idx}가 범위를 벗어났습니다.")
+        
+        start_idx = self.valid_idxs[idx]
+        end_idx = start_idx + self.seq_len
+        
+        # 시퀀스 데이터 추출
+        seq = self.features[start_idx:end_idx]
+        seq_labels = self.binary_labels[start_idx:end_idx]
+        
+        # batch_x: (seq_len, feature_num)
+        batch_x = torch.FloatTensor(seq)
+        
+        # batch_y: (seq_len, feature_num) - reconstruction을 위해 입력과 동일
+        batch_y = torch.FloatTensor(seq)
+        
+        # batch_x_mark: (seq_len, feature_num) - 시간 특성 (간단하게 0으로 설정)
+        batch_x_mark = torch.zeros(self.seq_len, self.feature_num)
+        
+        # batch_y_mark: (seq_len, feature_num) - 시간 특성 (간단하게 0으로 설정)
+        batch_y_mark = torch.zeros(self.seq_len, self.feature_num)
+        
+        return batch_x, batch_y, batch_x_mark, batch_y_mark
+    
+    @property
+    def labels(self):
+        """시퀀스 라벨을 반환합니다."""
+        # 모든 시퀀스의 라벨을 하나의 배열로 변환
+        all_labels = []
+        for idx in self.valid_idxs:
+            start_idx = idx
+            end_idx = start_idx + self.seq_len
+            seq_labels = self.binary_labels[start_idx:end_idx]
+            all_labels.extend(seq_labels)
+        return np.array(all_labels)
 
 
 class _SWaTDataset(Dataset):

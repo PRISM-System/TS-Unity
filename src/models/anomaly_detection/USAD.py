@@ -108,7 +108,7 @@ class USADModel(nn.Module):
         
         # 입력과 출력 크기 계산
         w_size = self.window_size * self.feature_num
-        z_size = self.window_size * hidden_size
+        z_size = hidden_size  # hidden_size는 고정된 값이어야 함
 
         # 인코더와 디코더 초기화
         self.encoder = Encoder(w_size, z_size)

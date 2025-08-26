@@ -93,12 +93,13 @@ class LSTMAutoencoder(nn.Module):
         Returns:
             초기화된 숨겨진 상태
         """
+        device = next(self.parameters()).device
         if self.rnn_type == 'GRU':
-            return torch.zeros(self.nlayers, batch_size, self.rnn_hid_size).cuda()
+            return torch.zeros(self.nlayers, batch_size, self.rnn_hid_size, device=device)
         elif self.rnn_type == 'LSTM':
             return (
-                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size).cuda(),
-                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size).cuda()
+                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size, device=device),
+                torch.zeros(self.nlayers, batch_size, self.rnn_hid_size, device=device)
             )
         else:
             raise ValueError(f'알 수 없는 RNN 타입: {self.rnn_type}. 유효한 옵션: "gru", "lstm"')
