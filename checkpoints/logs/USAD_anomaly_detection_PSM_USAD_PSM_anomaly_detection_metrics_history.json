@@ -1,0 +1,32 @@
+[
+  {
+    "timestamp": 1756175860.9003918,
+    "step": null,
+    "metrics": {
+      "anomaly_score_mean": "0.9981051",
+      "anomaly_score_std": "0.025418995",
+      "detection_method": "reconstruction-based",
+      "method_info": {
+        "detection_method": "reconstruction-based",
+        "model_type": "USAD",
+        "description": "Uses reconstruction error to detect anomalies",
+        "approach": "Compares input with reconstructed output"
+      }
+    }
+  },
+  {
+    "timestamp": 1756175860.9024086,
+    "step": null,
+    "metrics": {
+      "anomaly_score_mean": "0.9981051",
+      "anomaly_score_std": "0.025418995",
+      "detection_method": "reconstruction-based",
+      "method_info": {
+        "detection_method": "reconstruction-based",
+        "model_type": "USAD",
+        "description": "Uses reconstruction error to detect anomalies",
+        "approach": "Compares input with reconstructed output"
+      }
+    }
+  }
+]

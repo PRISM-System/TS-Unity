@@ -51,6 +51,12 @@ class Exp_Basic(ABC):
         """Attempt to import the model module from forecasting or anomaly_detection packages.
         Returns the imported module or None.
         """
+        # Add current directory to Python path
+        import sys
+        current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if current_dir not in sys.path:
+            sys.path.insert(0, current_dir)
+        
         # Try explicit paths to avoid importing the whole models package
         for subpkg in ("models.forecasting", "models.anomaly_detection"):
             try:

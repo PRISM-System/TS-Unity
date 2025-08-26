@@ -1,0 +1,52 @@
+# Data settings
+data: 'PSM'
+root_path: './datasets/PSM/'
+data_path: 'train.csv'
+features: 'M'
+target: 'OT'
+freq: 'h'
+checkpoints: './checkpoints/'
+
+# Sequence settings
+seq_len: 100
+label_len: 50
+pred_len: 1
+
+# Model architecture (USAD specific)
+enc_in: 25
+dec_in: 25
+c_out: 25
+d_model: 128
+n_heads: 8
+e_layers: 2
+d_layers: 1
+d_ff: 256
+factor: 5
+dropout: 0.1
+embed: 'timeF'
+activation: 'gelu'
+output_attention: false
+
+# Training settings
+num_workers: 10
+itr: 1
+train_epochs: 50
+batch_size: 128
+patience: 5
+learning_rate: 0.001
+des: 'USAD_PSM_anomaly_detection'
+loss: 'MSE'
+lradj: 'type1'
+use_amp: false
+
+# Hardware settings
+use_gpu: true
+gpu: 0
+gpu_type: 'cuda'
+use_multi_gpu: false
+devices: '0'
+seed: 2021
+
+# Misc settings
+use_dtw: false
+use_tqdm: true

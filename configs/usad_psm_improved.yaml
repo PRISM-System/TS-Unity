@@ -1,0 +1,52 @@
+# Data settings
+data: 'PSM'
+root_path: './datasets/PSM/'
+data_path: 'train.csv'
+features: 'M'
+target: 'OT'
+freq: 'h'
+checkpoints: './checkpoints/'
+
+# Sequence settings
+seq_len: 100
+label_len: 50
+pred_len: 1
+
+# Model architecture (USAD improved based on reference)
+enc_in: 25
+dec_in: 25
+c_out: 25
+d_model: 40  # hidden_size from reference
+n_heads: 4   # reduced from 8
+e_layers: 2
+d_layers: 1
+d_ff: 160    # 4 * d_model
+factor: 5
+dropout: 0.1
+embed: 'timeF'
+activation: 'gelu'
+output_attention: false
+
+# Training settings (optimized based on reference)
+num_workers: 8
+itr: 1
+train_epochs: 100
+batch_size: 32  # from reference
+patience: 10
+learning_rate: 0.001  # from reference
+des: 'USAD_PSM_improved'
+loss: 'MSE'
+lradj: 'type1'
+use_amp: false
+
+# Hardware settings
+use_gpu: true
+gpu: 0
+gpu_type: 'cuda'
+use_multi_gpu: false
+devices: '0'
+seed: 2021
+
+# Misc settings
+use_dtw: false
+use_tqdm: true

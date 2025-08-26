@@ -1,0 +1,32 @@
+[
+  {
+    "timestamp": 1756176616.4449658,
+    "step": null,
+    "metrics": {
+      "anomaly_score_mean": "0.98703796",
+      "anomaly_score_std": "0.2707137",
+      "detection_method": "reconstruction-based",
+      "method_info": {
+        "detection_method": "reconstruction-based",
+        "model_type": "LSTM_AE",
+        "description": "Uses reconstruction error to detect anomalies",
+        "approach": "Compares input with reconstructed output"
+      }
+    }
+  },
+  {
+    "timestamp": 1756176616.4464154,
+    "step": null,
+    "metrics": {
+      "anomaly_score_mean": "0.98703796",
+      "anomaly_score_std": "0.2707137",
+      "detection_method": "reconstruction-based",
+      "method_info": {
+        "detection_method": "reconstruction-based",
+        "model_type": "LSTM_AE",
+        "description": "Uses reconstruction error to detect anomalies",
+        "approach": "Compares input with reconstructed output"
+      }
+    }
+  }
+]

@@ -97,7 +97,7 @@ def data_provider(args: BaseConfig, flag: str):
 
 
 class _ETTDataset(Dataset):
-    """ETT dataset loader for forecasting.
+    """ETT dataset loader for forecasting based on the reference implementation.
 
     Expects files under /TS-Unity/datasets/ETT-small/{ETTh1,ETTh2,ETTm1,ETTm2}.csv
     Returns tuples: (batch_x, batch_y, batch_x_mark, batch_y_mark)
@@ -108,7 +108,14 @@ class _ETTDataset(Dataset):
         self.flag = flag
         self.seq_len = args.seq_len
         self.label_len = getattr(args, 'label_len', max(1, self.seq_len // 2))
-        self.pred_len = getattr(args, 'pred_len', 1)
+        self.pred_len = args.pred_len
+        
+        # Features handling
+        self.features = getattr(args, 'features', 'M')
+        self.target = getattr(args, 'target', 'OT')
+        self.scale = getattr(args, 'scale', True)
+        self.timeenc = getattr(args, 'timeenc', 0)
+        self.freq = getattr(args, 'freq', 'h')
 
         name_map = {
             'etth1': 'ETTh1.csv',
@@ -121,43 +128,93 @@ class _ETTDataset(Dataset):
         if not csv_path.exists():
             raise FileNotFoundError(f"ETT file not found: {csv_path}")
 
-        df = pd.read_csv(csv_path)
-        # First column is timestamp
-        time_col = pd.to_datetime(df.iloc[:, 0])
-        values = df.iloc[:, 1:].values.astype(np.float32)
+        self.__read_data__(csv_path)
 
-        # Train/Val/Test split as common in ETT: 12/4/4 months equivalent
-        n = len(values)
-        # Rough split indices
-        train_end = int(n * 0.6)
-        val_end = int(n * 0.8)
-        if flag == 'train':
-            self.data = values[:train_end]
-            self.time = time_col.iloc[:train_end].reset_index(drop=True)
-        elif flag == 'val':
-            self.data = values[train_end:val_end]
-            self.time = time_col.iloc[train_end:val_end].reset_index(drop=True)
+    def __read_data__(self, csv_path):
+        """Read and preprocess the ETT data following the reference implementation."""
+        df_raw = pd.read_csv(csv_path)
+        
+        # Define borders for train/val/test split (12/4/4 months equivalent)
+        # 12 months = 12 * 30 * 24 = 8640 hours
+        # 4 months = 4 * 30 * 24 = 2880 hours
+        border1s = [0, 12 * 30 * 24 - self.seq_len, 12 * 30 * 24 + 4 * 30 * 24 - self.seq_len]
+        border2s = [12 * 30 * 24, 12 * 30 * 24 + 4 * 30 * 24, 12 * 30 * 24 + 8 * 30 * 24]
+        
+        # Map flag to set_type
+        type_map = {'train': 0, 'val': 1, 'test': 2}
+        self.set_type = type_map[self.flag]
+        border1 = border1s[self.set_type]
+        border2 = border2s[self.set_type]
+
+        # Handle features
+        if self.features == 'M' or self.features == 'MS':
+            cols_data = df_raw.columns[1:]  # Skip timestamp column
+            df_data = df_raw[cols_data]
+        elif self.features == 'S':
+            df_data = df_raw[[self.target]]
         else:
-            self.data = values[val_end:]
-            self.time = time_col.iloc[val_end:].reset_index(drop=True)
+            # Default to multivariate
+            cols_data = df_raw.columns[1:]
+            df_data = df_raw[cols_data]
 
-        # Fit scaler on train split and transform current split
-        train_values = values[:train_end]
-        mean = train_values.mean(axis=0)
-        std = train_values.std(axis=0) + 1e-8
-        self.scaler = StandardScaler(mean, std)
-        self.data_scaled = self.scaler.transform(self.data)
+        # Scaling
+        if self.scale:
+            train_data = df_data[border1s[0]:border2s[0]]
+            train_values = train_data.values
+            mean = train_values.mean(axis=0)
+            std = train_values.std(axis=0) + 1e-8
+            self.scaler = StandardScaler(mean, std)
+            data = self.scaler.transform(df_data.values)
+        else:
+            data = df_data.values
+            self.scaler = None
+
+        # Time features
+        df_stamp = df_raw[['date']][border1:border2]
+        df_stamp['date'] = pd.to_datetime(df_stamp['date'])
+        
+        if self.timeenc == 0:
+            # Basic time features: month, day, weekday, hour
+            df_stamp['month'] = df_stamp['date'].dt.month
+            df_stamp['day'] = df_stamp['date'].dt.day
+            df_stamp['weekday'] = df_stamp['date'].dt.weekday
+            df_stamp['hour'] = df_stamp['date'].dt.hour
+            data_stamp = df_stamp.drop(['date'], axis=1).values
+        elif self.timeenc == 1:
+            # Advanced time features (if time_features function exists)
+            try:
+                from utils.tools import time_features
+                data_stamp = time_features(pd.to_datetime(df_stamp['date'].values), freq=self.freq)
+                data_stamp = data_stamp.transpose(1, 0)
+            except ImportError:
+                # Fallback to basic features
+                df_stamp['month'] = df_stamp['date'].dt.month
+                df_stamp['day'] = df_stamp['date'].dt.day
+                df_stamp['weekday'] = df_stamp['date'].dt.weekday
+                df_stamp['hour'] = df_stamp['date'].dt.hour
+                data_stamp = df_stamp.drop(['date'], axis=1).values
+        else:
+            # Default to basic features
+            df_stamp['month'] = df_stamp['date'].dt.month
+            df_stamp['day'] = df_stamp['date'].dt.day
+            df_stamp['weekday'] = df_stamp['date'].dt.weekday
+            df_stamp['hour'] = df_stamp['date'].dt.hour
+            data_stamp = df_stamp.drop(['date'], axis=1).values
+
+        self.data_x = data[border1:border2]
+        self.data_y = data[border1:border2]
+        self.data_stamp = data_stamp
 
         # Set enc/dec dims if not aligned
-        self.enc_in = values.shape[1]
-        self.c_out = values.shape[1]
+        self.enc_in = self.data_x.shape[1]
+        self.c_out = self.data_x.shape[1]
         # Ensure args dims match data
         self.args.enc_in = self.enc_in
         self.args.dec_in = self.enc_in
         self.args.c_out = self.c_out
 
     def __len__(self) -> int:
-        return max(0, len(self.data) - self.seq_len - self.pred_len + 1)
+        return len(self.data_x) - self.seq_len - self.pred_len + 1
 
     def __getitem__(self, index: int):
         s_begin = index
@@ -165,27 +222,23 @@ class _ETTDataset(Dataset):
         r_begin = s_end - self.label_len
         r_end = r_begin + self.label_len + self.pred_len
 
-        seq_x = self.data_scaled[s_begin:s_end]
-        seq_y = self.data_scaled[r_begin:r_end]
-
-        # Build time feature markers: [month, day, weekday, hour]
-        def _tf(dt_series: pd.Series) -> np.ndarray:
-            return np.stack([
-                dt_series.dt.month.values,
-                dt_series.dt.day.values,
-                dt_series.dt.weekday.values,
-                dt_series.dt.hour.values,
-            ], axis=1).astype(np.float32)
-
-        x_mark = _tf(self.time.iloc[s_begin:s_end])
-        y_mark = _tf(self.time.iloc[r_begin:r_end])
+        seq_x = self.data_x[s_begin:s_end]
+        seq_y = self.data_y[r_begin:r_end]
+        seq_x_mark = self.data_stamp[s_begin:s_end]
+        seq_y_mark = self.data_stamp[r_begin:r_end]
 
         return (
-            torch.from_numpy(seq_x),
-            torch.from_numpy(seq_y),
-            torch.from_numpy(x_mark),
-            torch.from_numpy(y_mark),
+            torch.from_numpy(seq_x).float(),
+            torch.from_numpy(seq_y).float(),
+            torch.from_numpy(seq_x_mark).float(),
+            torch.from_numpy(seq_y_mark).float(),
         )
+
+    def inverse_transform(self, data):
+        """Inverse transform scaled data back to original scale."""
+        if self.scaler is not None:
+            return self.scaler.inverse_transform(data)
+        return data
 
 
 class _SWaTDataset(Dataset):
@@ -279,7 +332,7 @@ class _SWaTDataset(Dataset):
                 labels_series = label_df.iloc[:, -1]
 
         # Split train/val/test per provided reference
-        valid_split_rate = 0.9
+        valid_split_rate = 0.8
         if flag == 'train':
             split_idx = int(len(values) * valid_split_rate)
             self.data = values[:split_idx]

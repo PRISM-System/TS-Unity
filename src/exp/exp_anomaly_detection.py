@@ -134,6 +134,77 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 scores = torch.zeros(batch_x.shape[0], 1, device=batch_x.device)
                 return outputs, scores
     
+    def _compute_train_loss(self, batch_x: torch.Tensor, batch_y: torch.Tensor,
+                           criterion: nn.Module, epoch: int = 1) -> torch.Tensor:
+        """
+        Compute training loss for different model types.
+        
+        Args:
+            batch_x: Input tensor
+            batch_y: Target tensor (same as batch_x for reconstruction models)
+            criterion: Loss function
+            epoch: Current epoch (used for some models like USAD)
+            
+        Returns:
+            Loss tensor
+        """
+        # Forward pass
+        outputs = self.model(batch_x)
+        
+        # Handle different model outputs
+        if self.args.model == 'LSTM_VAE':
+            if isinstance(outputs, list) and len(outputs) >= 2:
+                x_decoded, kl_loss = outputs[0], outputs[1]
+                rec_loss = criterion(x_decoded, batch_y)
+                loss = torch.mean(rec_loss) + kl_loss
+            else:
+                loss = torch.mean(criterion(outputs, batch_y))
+                
+        elif self.args.model == 'OmniAnomaly':
+            if isinstance(outputs, tuple) and len(outputs) >= 3:
+                x_recon, mu, logvar = outputs[0], outputs[1], outputs[2]
+                rec_loss = criterion(x_recon, batch_y)
+                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+                beta = 0.01  # OmniAnomaly beta parameter
+                loss = torch.mean(rec_loss) + beta * torch.mean(kl_loss)
+            else:
+                loss = torch.mean(criterion(outputs, batch_y))
+                
+        elif self.args.model == 'USAD':
+            if isinstance(outputs, list) and len(outputs) >= 3:
+                w1, w2, w3 = outputs[0], outputs[1], outputs[2]
+                # USAD dual autoencoder loss
+                n = epoch
+                loss1 = 1/n * torch.mean((batch_y - w1) ** 2) + (1 - 1/n) * torch.mean((batch_y - w3) ** 2)
+                loss2 = 1/n * torch.mean((batch_y - w2) ** 2) - (1 - 1/n) * torch.mean((batch_y - w3) ** 2)
+                loss = loss1 + loss2
+            else:
+                loss = torch.mean(criterion(outputs, batch_y))
+                
+        elif self.args.model == 'AnomalyTransformer':
+            if isinstance(outputs, tuple) and len(outputs) >= 3:
+                output, series, prior = outputs[0], outputs[1], outputs[2]
+                rec_loss = criterion(output, batch_y)
+                # Simplified series loss for AnomalyTransformer
+                loss = torch.mean(rec_loss)
+            else:
+                loss = torch.mean(criterion(outputs, batch_y))
+                
+        elif self.args.model == 'DAGMM':
+            if isinstance(outputs, tuple) and len(outputs) >= 2:
+                _, x_hat = outputs[0], outputs[1] if len(outputs) > 1 else outputs[0]
+                loss = torch.mean(criterion(x_hat, batch_y))
+            else:
+                loss = torch.mean(criterion(outputs, batch_y))
+                
+        else:
+            # Default reconstruction loss
+            if isinstance(outputs, (list, tuple)):
+                outputs = outputs[0]
+            loss = torch.mean(criterion(outputs, batch_y))
+            
+        return loss
+    
     def _compute_model_loss(self, batch_x: torch.Tensor, criterion: nn.Module, 
                            epoch: int = 1) -> torch.Tensor:
         """
@@ -251,11 +322,20 @@ class Exp_Anomaly_Detection(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
                 
-                # Get anomaly scores using appropriate method
-                outputs, scores = self._get_anomaly_scores(batch_x)
+                # For reconstruction models, target is the input itself
+                if self._is_reconstruction_model():
+                    batch_y = batch_x
+                else:
+                    batch_y = batch_y.float().to(self.device)
                 
-                # Calculate loss using KOGAS methodology
-                loss = self._compute_model_loss(batch_x, criterion)
+                # Forward pass through model
+                outputs = self.model(batch_x)
+                if isinstance(outputs, (list, tuple)):
+                    outputs = outputs[0]  # Take first output if multiple
+                
+                # Calculate reconstruction loss
+                loss = criterion(outputs, batch_y)
+                loss = torch.mean(loss)
                 
                 total_loss.append(loss.item())
                 
@@ -297,22 +377,21 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 model_optim.zero_grad()
                 
                 batch_x = batch_x.float().to(self.device)
+                
+                # For reconstruction models, target is the input itself
+                if self._is_reconstruction_model():
+                    batch_y = batch_x
+                else:
+                    batch_y = batch_y.float().to(self.device)
 
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
-                        # Get anomaly scores using appropriate method
-                        outputs, scores = self._get_anomaly_scores(batch_x)
-                        
-                        # Calculate loss using KOGAS methodology
-                        loss = self._compute_model_loss(batch_x, criterion, epoch + 1)
-                        
+                        # Model-specific loss computation
+                        loss = self._compute_train_loss(batch_x, batch_y, criterion, epoch + 1)
                         train_loss.append(loss.item())
                 else:
-                    # Get anomaly scores using appropriate method
-                    outputs, scores = self._get_anomaly_scores(batch_x)
-                    
-                    # Calculate loss using KOGAS methodology
-                    loss = self._compute_model_loss(batch_x, criterion, epoch + 1)
+                    # Model-specific loss computation
+                    loss = self._compute_train_loss(batch_x, batch_y, criterion, epoch + 1)
                     
                     train_loss.append(loss.item())
 
@@ -368,18 +447,25 @@ class Exp_Anomaly_Detection(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(test_loader):
                 batch_x = batch_x.float().to(self.device)
                 
-                # Get anomaly scores using appropriate method
-                outputs, scores = self._get_anomaly_scores(batch_x)
-                
-                # Map window scores to center timestep to align with point-wise labels
-                # scores shape: (batch, window_len or 1, ...)
-                if scores.dim() == 2:
-                    # (batch, win) -> take center
-                    center_idx = scores.shape[1] // 2
-                    center_scores = scores[:, center_idx]
+                # For reconstruction models, compute reconstruction error as anomaly score
+                if self._is_reconstruction_model():
+                    # Forward pass through model
+                    outputs = self.model(batch_x)
+                    if isinstance(outputs, (list, tuple)):
+                        outputs = outputs[0]  # Take first output if multiple
+                    
+                    # Calculate reconstruction error as anomaly score
+                    scores = torch.mean((outputs - batch_x) ** 2, dim=-1)  # (batch, seq_len)
+                    
+                    # Take the mean score across sequence for each sample
+                    scores = torch.mean(scores, dim=-1)  # (batch,)
                 else:
-                    center_scores = scores.squeeze()
-                anomaly_scores.append(center_scores.cpu().numpy())
+                    # For prediction models, use specialized scoring
+                    outputs, scores = self._prediction_based_scoring(batch_x)
+                    if scores.dim() > 1:
+                        scores = torch.mean(scores, dim=-1)
+                
+                anomaly_scores.append(scores.cpu().numpy())
                 if hasattr(test_data, 'labels'):
                     # Align labels to same center point
                     if batch_y.dim() >= 2:
