@@ -23,12 +23,14 @@ def RMSE(pred, true):
     return np.sqrt(MSE(pred, true))
 
 
-def MAPE(pred, true):
-    return np.mean(np.abs((true - pred) / true))
+def MAPE(pred, true, eps: float = 1e-6):
+    denom = np.maximum(np.abs(true), eps)
+    return np.mean(np.abs((true - pred) / denom))
 
 
-def MSPE(pred, true):
-    return np.mean(np.square((true - pred) / true))
+def MSPE(pred, true, eps: float = 1e-6):
+    denom = np.maximum(np.abs(true), eps)
+    return np.mean(np.square((true - pred) / denom))
 
 
 def metric(pred, true):

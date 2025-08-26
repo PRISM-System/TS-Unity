@@ -20,7 +20,10 @@ class Exp_Anomaly_Detection(Exp_Basic):
         super(Exp_Anomaly_Detection, self).__init__(args)
         
     def _build_model(self) -> BaseAnomalyDetectionModel:
-        model = self.model_dict.get(self.args.model, self.model_dict['AnomalyTransformer']).Model(self.args).float()
+        module = self.model_dict.get(self.args.model)
+        if module is None:
+            raise ImportError(f"Could not load model module for '{self.args.model}'")
+        model = module.Model(self.args).float()
         
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.devices)
@@ -368,9 +371,23 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 # Get anomaly scores using appropriate method
                 outputs, scores = self._get_anomaly_scores(batch_x)
                 
-                anomaly_scores.append(scores.cpu().numpy())
+                # Map window scores to center timestep to align with point-wise labels
+                # scores shape: (batch, window_len or 1, ...)
+                if scores.dim() == 2:
+                    # (batch, win) -> take center
+                    center_idx = scores.shape[1] // 2
+                    center_scores = scores[:, center_idx]
+                else:
+                    center_scores = scores.squeeze()
+                anomaly_scores.append(center_scores.cpu().numpy())
                 if hasattr(test_data, 'labels'):
-                    labels.append(batch_y.cpu().numpy())
+                    # Align labels to same center point
+                    if batch_y.dim() >= 2:
+                        center_idx_y = batch_y.shape[1] // 2
+                        center_labels = batch_y[:, center_idx_y]
+                    else:
+                        center_labels = batch_y
+                    labels.append(center_labels.cpu().numpy())
 
         anomaly_scores = np.concatenate(anomaly_scores, axis=0)
         

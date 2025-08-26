@@ -930,8 +930,12 @@ class TrainingPipeline:
         """
         exp = self.create_experiment()
         
-        logger.info("Running prediction phase")
-        pred_results = exp.predict()
+        logger.info("Running prediction phase (using test() as fallback)")
+        # Many Exp_* classes don't implement predict(); use test() to generate outputs/metrics
+        if hasattr(exp, 'predict') and callable(getattr(exp, 'predict')):
+            pred_results = exp.predict()
+        else:
+            pred_results = exp.test()
         
         return pred_results
     
@@ -954,13 +958,24 @@ class ConfigManager:
             raise ValueError(f"Invalid task name: {args.task_name}")
         
         # Filter out None values
-        config_dict = {k: v for k, v in vars(args).items() if v is not None}
+        raw_dict = {k: v for k, v in vars(args).items() if v is not None}
+        
+        # Only pass fields that the dataclass accepts (init=True)
+        try:
+            from dataclasses import fields, is_dataclass
+            if not is_dataclass(config_class):
+                raise TypeError("config_class is not a dataclass")
+            allowed_keys = {f.name for f in fields(config_class) if getattr(f, 'init', True)}
+            config_dict = {k: v for k, v in raw_dict.items() if k in allowed_keys}
+        except Exception:
+            # Fallback: pass raw dict (may raise if unexpected keys)
+            config_dict = raw_dict
         
         return config_class(**config_dict)
     
     @staticmethod
     def setup_args() -> argparse.Namespace:
-        """Setup command line argument parser."""
+        """Setup command line argument parser and return a config-like object with CLI extras attached."""
         parser = argparse.ArgumentParser(description='Time Series Analysis Pipeline')
         
         # Task configuration
@@ -1046,6 +1061,10 @@ class ConfigManager:
         parser.add_argument(
             '--c_out', type=int, default=7,
             help='Output size'
+        )
+        parser.add_argument(
+            '--nvars', type=int,
+            help='Override feature dimension: sets enc_in=dec_in=c_out to this value'
         )
         parser.add_argument(
             '--d_model', type=int, default=512,
@@ -1179,6 +1198,10 @@ class ConfigManager:
             help='Use Weights & Biases for logging'
         )
         parser.add_argument(
+            '--auto_feature_dims', action='store_true', default=False,
+            help='Infer feature count from dataset CSV to set enc_in/dec_in/c_out'
+        )
+        parser.add_argument(
             '--config_file', type=str,
             help='Path to configuration file'
         )
@@ -1199,16 +1222,60 @@ class ConfigManager:
         
         args = parser.parse_args()
         
-        # Handle configuration file
+        # Build config object (from file if provided or from CLI)
         if args.config_file:
             config = BaseConfig.from_yaml(args.config_file)
-            # Override with command line arguments
+            # Override with CLI values when provided
             for key, value in vars(args).items():
-                if value is not None:
+                if value is not None and hasattr(config, key):
                     setattr(config, key, value)
-            return config
-        
-        return ConfigManager.create_config_from_args(args)
+        else:
+            config = ConfigManager.create_config_from_args(args)
+
+        # Attach non-dataclass extras used by pipeline
+        for extra_key in [
+            'is_inference', 'checkpoint_path', 'input_data', 'output_path', 'use_wandb', 'auto_feature_dims',
+        ]:
+            if getattr(args, extra_key, None) is not None:
+                setattr(config, extra_key, getattr(args, extra_key))
+
+        # If user supplied nvars, override enc/dec/out dims uniformly
+        if getattr(args, 'nvars', None):
+            nvars = int(args.nvars)
+            config.enc_in = nvars
+            config.dec_in = nvars
+            config.c_out = nvars
+
+        # Auto-adjust input/output dims based on dataset if requested
+        try:
+            if getattr(args, 'auto_feature_dims', False):
+                data_name = str(getattr(config, 'data', '')).lower()
+                if data_name in {'electricity', 'ecl'}:
+                    from pathlib import Path
+                    import pandas as pd
+                    csv_path = Path('/TS-Unity/datasets/electricity/electricity.csv')
+                    if csv_path.exists():
+                        df = pd.read_csv(csv_path, nrows=1)
+                        feature_count = df.shape[1] - 1  # exclude timestamp
+                        if feature_count > 0:
+                            config.enc_in = feature_count
+                            config.dec_in = feature_count
+                            config.c_out = feature_count
+                elif data_name in {'exchange_rate', 'exchange'}:
+                    from pathlib import Path
+                    import pandas as pd
+                    csv_path = Path('/TS-Unity/datasets/exchange_rate/exchange_rate.csv')
+                    if csv_path.exists():
+                        df = pd.read_csv(csv_path, nrows=1)
+                        feature_count = df.shape[1] - 1
+                        if feature_count > 0:
+                            config.enc_in = feature_count
+                            config.dec_in = feature_count
+                            config.c_out = feature_count
+        except Exception:
+            pass
+
+        return config
 
 
 def main() -> None:

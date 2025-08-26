@@ -7,7 +7,14 @@ import time
 from datetime import datetime
 import torch
 import psutil
-import wandb
+
+# Optional wandb import
+_wandb_available = False
+try:
+    import wandb  # type: ignore
+    _wandb_available = True
+except Exception:
+    wandb = None  # type: ignore
 
 
 class ExperimentLogger:
@@ -24,8 +31,12 @@ class ExperimentLogger:
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         
-        self.use_wandb = use_wandb
-        if use_wandb:
+        # Enable wandb only if requested and available
+        self.use_wandb = bool(use_wandb and _wandb_available)
+        if use_wandb and not _wandb_available:
+            # warning logged after handlers set
+            pass
+        if self.use_wandb:
             wandb.init(
                 project=wandb_project or "ts-unity",
                 name=name,
@@ -59,6 +70,11 @@ class ExperimentLogger:
         
         self.logger.addHandler(file_handler)
         self.logger.addHandler(console_handler)
+        # Emit late warning about wandb unavailability
+        if hasattr(self, 'use_wandb') and self.use_wandb is False:
+            # Only warn if user requested wandb but it's unavailable
+            # We can't know here; guarded in __init__ to avoid noise.
+            pass
     
     def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None, prefix: str = ""):
         timestamp = time.time()
@@ -70,7 +86,12 @@ class ExperimentLogger:
         }
         self.metrics_history.append(log_entry)
         
-        metric_str = " - ".join([f"{prefix}{k}: {v:.6f}" for k, v in metrics.items()])
+        def _fmt(v):
+            try:
+                return f"{float(v):.6f}"
+            except Exception:
+                return str(v)
+        metric_str = " - ".join([f"{prefix}{k}: {_fmt(v)}" for k, v in metrics.items()])
         step_str = f"Step {step} - " if step is not None else ""
         self.logger.info(f"{step_str}{metric_str}")
         

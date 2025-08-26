@@ -5,10 +5,7 @@ from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
-from models import Autoformer, Transformer, TimesNet, Nonstationary_Transformer, DLinear, FEDformer, \
-    Informer, LightTS, Reformer, ETSformer, Pyraformer, PatchTST, MICN, Crossformer, FiLM, iTransformer, \
-    Koopa, TiDE, FreTS, TimeMixer, TSMixer, SegRNN, MambaSimple, TemporalFusionTransformer, SCINet, PAttn, TimeXer, \
-    WPMixer, MultiPatchFormer
+import importlib
 from core.base_model import BaseTimeSeriesModel
 from config.base_config import BaseConfig
 
@@ -18,41 +15,14 @@ class Exp_Basic(ABC):
         self.args = args
         self.logger = logging.getLogger(self.__class__.__name__)
         self.setup_logging()
-        self.model_dict = {
-            'TimesNet': TimesNet,
-            'Autoformer': Autoformer,
-            'Transformer': Transformer,
-            'Nonstationary_Transformer': Nonstationary_Transformer,
-            'DLinear': DLinear,
-            'FEDformer': FEDformer,
-            'Informer': Informer,
-            'LightTS': LightTS,
-            'Reformer': Reformer,
-            'ETSformer': ETSformer,
-            'PatchTST': PatchTST,
-            'Pyraformer': Pyraformer,
-            'MICN': MICN,
-            'Crossformer': Crossformer,
-            'FiLM': FiLM,
-            'iTransformer': iTransformer,
-            'Koopa': Koopa,
-            'TiDE': TiDE,
-            'FreTS': FreTS,
-            'MambaSimple': MambaSimple,
-            'TimeMixer': TimeMixer,
-            'TSMixer': TSMixer,
-            'SegRNN': SegRNN,
-            'TemporalFusionTransformer': TemporalFusionTransformer,
-            "SCINet": SCINet,
-            'PAttn': PAttn,
-            'TimeXer': TimeXer,
-            'WPMixer': WPMixer,
-            'MultiPatchFormer': MultiPatchFormer
-        }
+        # Lazy-load only the requested model to avoid importing optional deps
+        self.model_dict = {}
+        model_module = self._load_model_module(args.model)
+        if model_module is None:
+            raise ImportError(f"Could not find model module for '{args.model}'")
+        self.model_dict[args.model] = model_module
         if args.model == 'Mamba':
             print('Please make sure you have successfully installed mamba_ssm')
-            from models import Mamba
-            self.model_dict['Mamba'] = Mamba
 
         self.device = self._acquire_device()
         self.model = self._build_model().to(self.device)
@@ -76,6 +46,18 @@ class Exp_Basic(ABC):
             device = torch.device('cpu')
             print('Use CPU')
         return device
+
+    def _load_model_module(self, name: str):
+        """Attempt to import the model module from forecasting or anomaly_detection packages.
+        Returns the imported module or None.
+        """
+        # Try explicit paths to avoid importing the whole models package
+        for subpkg in ("models.forecasting", "models.anomaly_detection"):
+            try:
+                return importlib.import_module(f"{subpkg}.{name}")
+            except Exception:
+                continue
+        return None
 
     @abstractmethod
     def _get_data(self):

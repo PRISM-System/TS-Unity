@@ -35,10 +35,11 @@ def setup_environment() -> None:
     if sys.version_info < (3, 8):
         raise RuntimeError("Python 3.8 or higher is required")
     
-    # Check if required directories exist
-    required_dirs = ['src', 'configs']
+    # Check if required directories exist at project root
+    project_root = src_path.parent
+    required_dirs = ['configs', 'datasets']
     for dir_name in required_dirs:
-        if not (src_path / dir_name).exists():
+        if not (project_root / dir_name).exists():
             raise RuntimeError(f"Required directory '{dir_name}' not found")
     
     logger.info("Environment setup completed")

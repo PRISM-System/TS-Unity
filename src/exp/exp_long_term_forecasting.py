@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
-from utils.tools import EarlyStopping, adjust_learning_rate, visual, test_params_flop
+from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
 from core.base_trainer import ForecastingTrainer
 from core.base_model import BaseForecastingModel
@@ -291,7 +291,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
     def test(self) -> Dict[str, float]:
         test_data, test_loader = self._get_data(flag='test')
         
-        if self.args.test:
+        if hasattr(self.args, 'test') and self.args.test:
             self.logger.info('loading model')
             self.model.load_state_dict(torch.load(os.path.join('./checkpoints/' + self.args.des, 'checkpoint.pth')))
 
@@ -350,9 +350,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     pd = np.concatenate((input[0, :, -1], pred[0, :, -1]), axis=0)
                     visual(gt, pd, os.path.join(folder_path, str(i) + '.pdf'))
 
-        preds = np.array(preds)
-        trues = np.array(trues)
-        inputx = np.array(inputx)
+        preds = np.concatenate(preds, axis=0)
+        trues = np.concatenate(trues, axis=0)
+        inputx = np.concatenate(inputx, axis=0)
         preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
         trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
         inputx = inputx.reshape(-1, inputx.shape[-2], inputx.shape[-1])
@@ -361,7 +361,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
-        mae, mse, rmse, mape, mspe, rse, corr = metric(preds, trues)
+        mae, mse, rmse, mape, mspe = metric(preds, trues)
+        # Fallback metrics not provided by utils.metrics
+        from utils.metrics import RSE, CORR
+        rse = RSE(preds, trues)
+        corr = CORR(preds, trues)
         self.logger.info(f'mse:{mse}, mae:{mae}, rse:{rse}, corr:{corr}')
         f = open("result.txt", 'a')
         f.write(self.args.des + "  \n")
@@ -370,7 +374,17 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         f.write('\n')
         f.close()
 
-        np.save(folder_path + 'metrics.npy', np.array([mae, mse, rmse, mape, mspe, rse, corr]))
+        # Save metrics as a dict to support vector-valued corr
+        metrics_dict = {
+            'mae': float(mae),
+            'mse': float(mse),
+            'rmse': float(rmse),
+            'mape': float(mape),
+            'mspe': float(mspe),
+            'rse': float(rse),
+            'corr': corr
+        }
+        np.save(folder_path + 'metrics.npy', metrics_dict, allow_pickle=True)
         np.save(folder_path + 'pred.npy', preds)
         np.save(folder_path + 'true.npy', trues)
 
