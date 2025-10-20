@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from typing import List, Tuple, Dict, Any
+from .BaseModel import BaseAnomalyDetectionModel
 
 
 class Encoder(nn.Module):
@@ -80,7 +81,7 @@ class Decoder(nn.Module):
         return w
 
 
-class USADModel(nn.Module):
+class USADModel(BaseAnomalyDetectionModel):
     """
     USAD (Unsupervised Anomaly Detection) 모델
     
@@ -92,7 +93,7 @@ class USADModel(nn.Module):
         Args:
             config: Configuration object or params dict with model parameters
         """
-        super().__init__()
+        super().__init__(config)
         
         # Handle both old params dict format and new config format
         if hasattr(config, 'win_size'):
@@ -265,63 +266,27 @@ class USADModel(nn.Module):
         
         return reconstructed
     
-    def detect_anomaly(self, batch: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def _calculate_anomaly_scores(self, x: torch.Tensor, reconstructed: torch.Tensor) -> torch.Tensor:
         """
-        Detect anomalies using USAD reconstruction error.
+        Calculate USAD-specific anomaly scores.
         
         Args:
-            batch: Input tensor (batch_size, window_size, feature_num)
-            
-        Returns:
-            Tuple of (reconstructed_output, anomaly_scores)
-        """
-        # 배치를 2D로 변환
-        batch_2d = batch.view(([batch.shape[0], batch.shape[1] * batch.shape[2]]))
-        
-        # 인코딩
-        z = self.encoder(batch_2d)
-        
-        # 첫 번째 디코더로 재구성
-        w1 = self.decoder1(z)
-        
-        # 두 번째 디코더로 재구성
-        w2 = self.decoder2(z)
-        
-        # USAD 이상 점수 계산: α * R1 + (1-α) * R2, 여기서 α=0.5
-        alpha = 0.5
-        anomaly_scores = (alpha * torch.mean((batch_2d - w1) ** 2, dim=1) + 
-                         (1 - alpha) * torch.mean((batch_2d - w2) ** 2, dim=1))
-        
-        # 원래 형태로 변환
-        reconstructed = w1.view([batch.shape[0], batch.shape[1], batch.shape[2]])
-        
-        return reconstructed, anomaly_scores
-    
-    def get_anomaly_score(self, batch: torch.Tensor, method: str = 'usad') -> torch.Tensor:
-        """
-        Calculate anomaly scores using USAD-specific method.
-        
-        Args:
-            batch: Input tensor (batch_size, window_size, feature_num)
-            method: Scoring method ('usad', 'mse', 'combined')
+            x: Original input tensor
+            reconstructed: Reconstructed tensor
             
         Returns:
             Anomaly scores tensor
         """
-        if method == 'usad':
-            _, scores = self.detect_anomaly(batch)
-            return scores
-        elif method == 'mse':
-            reconstructed = self.reconstruct(batch)
-            return torch.mean((batch - reconstructed) ** 2, dim=(1, 2))
-        elif method == 'combined':
-            # USAD와 MSE의 조합
-            usad_scores, _ = self.detect_anomaly(batch)
-            reconstructed = self.reconstruct(batch)
-            mse_scores = torch.mean((batch - reconstructed) ** 2, dim=(1, 2))
-            return 0.5 * (usad_scores + mse_scores)
-        else:
-            raise ValueError(f"Unknown scoring method: {method}")
+        # 배치를 2D로 변환
+        batch_2d = x.view(([x.shape[0], x.shape[1] * x.shape[2]]))
+        reconstructed_2d = reconstructed.view(([reconstructed.shape[0], reconstructed.shape[1] * reconstructed.shape[2]]))
+        
+        # USAD 이상 점수 계산: α * R1 + (1-α) * R2, 여기서 α=0.5
+        alpha = 0.5
+        anomaly_scores = (alpha * torch.mean((batch_2d - reconstructed_2d) ** 2, dim=1) + 
+                         (1 - alpha) * torch.mean((batch_2d - reconstructed_2d) ** 2, dim=1))
+        
+        return anomaly_scores
     
     def compute_loss(self, batch: torch.Tensor, criterion: nn.Module, n: int = 1) -> torch.Tensor:
         """

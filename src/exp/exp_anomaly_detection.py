@@ -5,6 +5,7 @@ import torch.nn as nn
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 from torch.utils.data import DataLoader
+import pdb
 
 from data_provider.data_factory import data_provider
 from exp.exp_basic import Exp_Basic
@@ -67,7 +68,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
         """Check if the current model is reconstruction-based."""
         reconstruction_models = [
             'AnomalyTransformer', 'OmniAnomaly', 'USAD', 'DAGMM',
-            'AutoEncoder', 'VAE', 'LSTM_VAE', 'LSTM_AE'
+            'LSTM_VAE', 'LSTM_AE', 'VTTPAT', 'VTTSAT'
         ]
         return self.args.model in reconstruction_models
     
@@ -114,20 +115,6 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 scores = torch.zeros(batch_x.shape[0], 1, device=batch_x.device)
                 return outputs, scores
     
-    def _my_kl_loss(self, p: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
-        """
-        KL divergence 손실을 계산합니다.
-        
-        Args:
-            p: 첫 번째 확률 분포
-            q: 두 번째 확률 분포
-            
-        Returns:
-            KL divergence 손실
-        """
-        res = p * (torch.log(p + 0.0001) - torch.log(q + 0.0001))
-        return torch.mean(torch.sum(res, dim=-1), dim=1)
-    
     def _prediction_based_scoring(self, batch_x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """Get anomaly scores using prediction-based method."""
         try:
@@ -169,375 +156,8 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 outputs = batch_x
                 scores = torch.zeros(batch_x.shape[0], 1, device=batch_x.device)
                 return outputs, scores
-    
-    def _train_step(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                   optimizers: Any, criterion: nn.Module, epoch: int, 
-                   alpha: float = 0.5, beta: float = 0.5) -> Tuple[float, np.ndarray]:
-        """한 배치의 학습을 수행합니다."""
-        if self.args.model in ['VTTSAT', 'VTTPAT']:
-            return self._train_vttsat_vttpat(batch_x, batch_y, optimizers, criterion)
-        elif self.args.model == 'LSTM_VAE':
-            return self._train_lstm_vae(batch_x, batch_y, optimizers, criterion)
-        elif self.args.model == 'USAD':
-            return self._train_usad(batch_x, batch_y, optimizers, criterion, epoch, alpha, beta)
-        elif self.args.model == 'OmniAnomaly':
-            return self._train_omnianomaly(batch_x, batch_y, optimizers, criterion)
-        elif self.args.model == 'DAGMM':
-            return self._train_dagmm(batch_x, batch_y, optimizers, criterion)
-        elif self.args.model == 'AnomalyTransformer':
-            return self._train_anomaly_transformer(batch_x, batch_y, optimizers, criterion)
-        else:
-            return self._train_default(batch_x, batch_y, optimizers, criterion)
-
-    def _train_vttsat_vttpat(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                            optimizers: Any, criterion: nn.Module) -> Tuple[float, np.ndarray]:
-        """VTTSAT/VTTPAT 모델 학습"""
-        optimizers.zero_grad()
-        output, _ = self.model(batch_x)
-        loss = criterion(output, batch_y)
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        loss.backward()
-        optimizers.step()
-        return loss.item(), score
-
-    def _train_lstm_vae(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                       optimizers: Any, criterion: nn.Module) -> Tuple[float, np.ndarray]:
-        """LSTM-VAE 모델 학습"""
-        optimizers.zero_grad()
-        output = self.model(batch_x)
-        loss = criterion(output[0], batch_y)
-        kl_loss = output[1]
-        loss = loss + kl_loss
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        loss.backward()
-        optimizers.step()
-        return loss.item(), score
-
-    def _train_usad(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                   optimizers: Any, criterion: nn.Module, 
-                   epoch: int, alpha: float, beta: float) -> Tuple[float, np.ndarray]:
-        """USAD 모델 학습"""
-        model_optim1, model_optim2 = optimizers
-        
-        # 첫 번째 오토인코더 학습
-        model_optim1.zero_grad()
-        output = self.model(batch_x)
-        w1 = output[0].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        w3 = output[2].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        loss1 = (1 / (epoch + 1) * torch.mean((batch_y - w1) ** 2) + 
-                (1 - 1 / (epoch + 1)) * torch.mean((batch_y - w3) ** 2))
-        loss1.backward()
-        model_optim1.step()
-        
-        # 두 번째 오토인코더 학습
-        model_optim2.zero_grad()
-        output = self.model(batch_x)
-        w1 = output[0].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        w2 = output[1].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        w3 = output[2].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        loss2 = (1 / (epoch + 1) * torch.mean((batch_y - w2) ** 2) - 
-                (1 - 1 / (epoch + 1)) * torch.mean((batch_y - w3) ** 2))
-        loss2.backward()
-        model_optim2.step()
-        
-        # 최종 손실 계산
-        loss = alpha * criterion(w1, batch_x) + beta * criterion(w2, batch_x)
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        
-        return loss.item(), score
-
-    def _train_omnianomaly(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                          optimizers: Any, criterion: nn.Module) -> Tuple[float, np.ndarray]:
-        """OmniAnomaly 모델 학습"""
-        optimizers.zero_grad()
-        hidden = None
-        y_pred, mu, logvar, hidden = self.model(batch_x, hidden if 'hidden' in locals() else None)
-        MSE = criterion(y_pred, batch_y)
-        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-        loss = MSE + self.model.beta * KLD
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        loss.backward()
-        optimizers.step()
-        return loss.item(), score
-
-    def _train_dagmm(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                    optimizers: Any, criterion: nn.Module) -> Tuple[float, np.ndarray]:
-        """DAGMM 모델 학습"""
-        optimizers.zero_grad()
-        _, x_hat, z, gamma = self.model(batch_x)
-        l1, l2 = criterion(x_hat, batch_x), criterion(gamma, batch_x)
-        loss = l1 + l2
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        loss.backward()
-        optimizers.step()
-        return loss.item(), score
-
-    def _train_anomaly_transformer(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                                 optimizers: Any, criterion: nn.Module) -> Tuple[float, np.ndarray]:
-        """AnomalyTransformer 모델 학습"""
-        optimizers.zero_grad()
-        output, series, prior, _ = self.model(batch_x)
-
-        # Series loss 계산
-        series_loss = 0.0
-        window_size = getattr(self.args, 'window_size', 100)
-        for u in range(len(prior)):
-            prior_normalized = prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, window_size)
-            series_loss += (torch.mean(self._my_kl_loss(series[u], prior_normalized.detach())) + 
-                           torch.mean(self._my_kl_loss(prior_normalized.detach(), series[u])))
-        series_loss /= len(prior)
-
-        # Reconstruction loss 계산
-        rec_loss = criterion(output, batch_x)
-        k = getattr(self.args, 'k', 0.1)
-        loss = rec_loss - k * series_loss
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        loss.backward(retain_graph=True)
-        optimizers.step()
-        
-        return loss.item(), score
-
-    def _train_default(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                      optimizers: Any, criterion: nn.Module) -> Tuple[float, np.ndarray]:
-        """기본 모델 학습"""
-        optimizers.zero_grad()
-        output = self.model(batch_x)
-        loss = criterion(output, batch_y)
-        score = np.mean(loss.cpu().detach().numpy(), axis=2)
-        loss = torch.mean(loss)
-        loss.backward()
-        optimizers.step()
-        return loss.item(), score
-    
-    def _compute_model_loss(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                           criterion: nn.Module, epoch: int = 0) -> Tuple[torch.Tensor, np.ndarray]:
-        """
-        모델별 손실을 계산합니다.
-        
-        Args:
-            batch_x: 입력 데이터
-            batch_y: 타겟 데이터
-            criterion: 손실 함수
-            epoch: 현재 에포크
-            
-        Returns:
-            손실 텐서와 검증 점수
-        """
-        if self.args.model in ['VTTPAT', 'VTTSAT']:
-            output, _ = self.model(batch_x)
-            loss = criterion(output, batch_y)
-            valid_score = np.mean(loss.cpu().detach().numpy(), axis=2)
-            loss = torch.mean(loss)
-            
-        elif self.args.model == 'LSTM_VAE':
-            output = self.model(batch_x)
-            loss = criterion(output[0], batch_y)
-            kl_loss = output[1]
-            loss = loss + kl_loss
-            valid_score = np.mean(loss.cpu().detach().numpy(), axis=2)
-            loss = torch.mean(loss)
-            
-        elif self.args.model == 'USAD':
-            output = self.model(batch_x)
-            w1 = output[0].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-            w2 = output[1].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-            w3 = output[2].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-            
-            loss1 = (1 / (epoch + 1) * torch.mean((batch_y - w1) ** 2, axis=2) + 
-                    (1 - 1 / (epoch +1)) * torch.mean((batch_y - w3) ** 2, axis=2))
-            loss2 = (1 / (epoch + 1) * torch.mean((batch_y - w2) ** 2, axis=2) - 
-                    (1 - 1 / (epoch + 1)) * torch.mean((batch_y - w3) ** 2, axis=2))
-            
-            loss = loss1 + loss2
-            valid_score = loss.cpu().detach().numpy()
-            epoch_loss1 = torch.mean(loss1)
-            epoch_loss2 = torch.mean(loss2)
-            loss = epoch_loss1 + epoch_loss2
-            return loss, valid_score
-            
-        elif self.args.model == 'OmniAnomaly':
-            y_pred, mu, logvar, hidden = self.model(batch_x, hidden if 'hidden' in locals() else None)
-            MSE = criterion(y_pred, batch_y)
-            KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
-            loss = MSE + self.model.beta * KLD
-            valid_score = np.mean(loss.cpu().detach().numpy(), axis=2)
-            loss = torch.mean(loss)
-            
-        elif self.args.model == 'DAGMM':
-            _, x_hat, z, gamma = self.model(batch_x)
-            l1, l2 = criterion(x_hat, batch_x), criterion(gamma, batch_x)
-            loss = l1 + l2
-            valid_score = loss.cpu().detach().numpy()
-            loss = torch.mean(loss)
-            
-        elif self.args.model == 'LSTM_AE':
-            # LSTM-AE 모델의 손실 계산
-            output = self.model(batch_x)
-            loss = criterion(output, batch_y)
-            valid_score = np.mean(loss.cpu().detach().numpy(), axis=2)
-            loss = torch.mean(loss)
-            return loss, valid_score
-            
-        else:
-            # 기본 재구성 모델들
-            output = self.model(batch_x)
-            loss = criterion(output, batch_y)
-            valid_score = np.mean(loss.cpu().detach().numpy(), axis=2)
-            loss = torch.mean(loss)
-            return loss, valid_score
-    
-    def _compute_model_loss_with_score(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                                      criterion: nn.Module, epoch: int = 1) -> Tuple[torch.Tensor, np.ndarray]:
-        """
-        Compute model-specific loss and score for validation.
-        
-        Args:
-            batch_x: Input batch data
-            batch_y: Target batch data
-            criterion: Loss function
-            epoch: Current epoch (used for some models like USAD)
-            
-        Returns:
-            Tuple of (loss tensor, score numpy array)
-        """
-        # Use the updated _compute_model_loss method
-        loss, valid_score = self._compute_model_loss(batch_x, batch_y, criterion, epoch)
-        return loss, valid_score
-    
-    def _compute_usad_loss(self, batch_x: torch.Tensor, criterion: nn.Module, epoch: int) -> torch.Tensor:
-        """USAD-specific loss computation."""
-        if hasattr(self.model, 'training_step'):
-            # Use model's training step method
-            loss1, loss2 = self.model.training_step(batch_x, epoch)
-            return loss1 + loss2
-        else:
-            # Fallback to reconstruction loss
-            outputs = self.model(batch_x)
-            if isinstance(outputs, list):
-                # USAD returns multiple outputs
-                w1, w2 = outputs[0], outputs[1] if len(outputs) > 1 else outputs[0]
-                loss = 0.5 * (criterion(w1, batch_x).mean() + criterion(w2, batch_x).mean())
-            else:
-                loss = criterion(outputs, batch_x).mean()
-            return loss
-    
-    def _compute_anomaly_transformer_loss(self, batch_x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """AnomalyTransformer-specific loss computation."""
-        if hasattr(self.model, 'compute_loss'):
-            return self.model.compute_loss(batch_x, criterion)
-        else:
-            # Fallback to reconstruction loss
-            outputs = self.model(batch_x)
-            if isinstance(outputs, tuple) and len(outputs) >= 4:
-                output, series, prior, _ = outputs
-                
-                # Series loss 계산
-                series_loss = 0.0
-                for u in range(len(prior)):
-                    # KL divergence loss for series and prior
-                    prior_normalized = prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1, self.args.window_size)
-                    series_loss += (torch.mean(self._my_kl_loss(series[u], prior_normalized.detach())) + 
-                                   torch.mean(self._my_kl_loss(prior_normalized.detach(), series[u])))
-                series_loss /= len(prior)
-                
-                # Reconstruction loss 계산
-                rec_loss = criterion(output, batch_x)
-                # k는 하이퍼파라미터로 설정 (기본값 0.1)
-                k = getattr(self.args, 'k', 0.1)
-                loss = rec_loss - k * series_loss
-                return torch.mean(loss)
-            else:
-                loss = criterion(outputs, batch_x).mean()
-                return loss
-    
-    def _compute_omnianomaly_loss(self, batch_x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """OmniAnomaly-specific loss computation."""
-        if hasattr(self.model, 'compute_loss'):
-            return self.model.compute_loss(batch_x, criterion)
-        else:
-            # Fallback implementation
-            outputs = self.model(batch_x)
-            if isinstance(outputs, tuple) and len(outputs) >= 3:
-                x_recon, mu, logvar = outputs[0], outputs[1], outputs[2]
-                rec_loss = criterion(x_recon, batch_x).mean()
-                kl_loss = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1).mean()
-                beta = getattr(self.model, 'beta', 0.01)
-                return rec_loss + beta * kl_loss
-            else:
-                return criterion(outputs, batch_x).mean()
-    
-    def _compute_lstm_vae_loss(self, batch_x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """LSTM-VAE-specific loss computation."""
-        if hasattr(self.model, 'compute_loss'):
-            return self.model.compute_loss(batch_x, criterion)
-        else:
-            # Fallback implementation
-            outputs = self.model(batch_x)
-            if isinstance(outputs, list) and len(outputs) >= 2:
-                x_decoded, kl_loss = outputs[0], outputs[1]
-                rec_loss = criterion(x_decoded, batch_x).mean()
-                return rec_loss + kl_loss
-            else:
-                return criterion(outputs, batch_x).mean()
-    
-    def _compute_dagmm_loss(self, batch_x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """DAGMM-specific loss computation."""
-        if hasattr(self.model, 'compute_loss'):
-            return self.model.compute_loss(batch_x, criterion)
-        else:
-            # Fallback implementation
-            outputs = self.model(batch_x)
-            if isinstance(outputs, tuple) and len(outputs) >= 2:
-                _, x_hat = outputs[0], outputs[1]
-                loss = criterion(x_hat, batch_x).mean()
-            else:
-                loss = criterion(outputs, batch_x).mean()
-            return loss
-
-    def vali(self, vali_data, vali_loader, criterion) -> Tuple[float, List[np.ndarray]]:
-        """
-        검증을 수행합니다.
-        
-        Args:
-            vali_data: 검증 데이터셋
-            vali_loader: 검증 데이터 로더
-            criterion: 손실 함수
-            
-        Returns:
-            총 손실과 검증 점수 리스트
-        """
-        total_loss = []
-        valid_score = []
-        self.model.eval()
-        
-        with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(vali_loader):
-                batch_x = batch_x.float().to(self.device)
-                
-                # For reconstruction models, target is the input itself
-                if self._is_reconstruction_model():
-                    batch_y = batch_x
-                else:
-                    batch_y = batch_y.float().to(self.device)
-                
-                # Use model-specific loss computation
-                loss, score = self._compute_model_loss_with_score(batch_x, batch_y, criterion)
-                
-                total_loss.append(loss.item())
-                valid_score.append(score)
-                
-        self.model.train()
-        return np.mean(total_loss), valid_score
 
     def train(self) -> Dict[str, Any]:
-        import pdb; pdb.set_trace()  # 디버깅을 위한 중단점
-        
         train_data, train_loader = self._get_data(flag='train')
         vali_data, vali_loader = self._get_data(flag='val')
         test_data, test_loader = self._get_data(flag='test')
@@ -567,14 +187,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
             self.model.train()
             epoch_time = time.time()
             
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
-                # USAD 모델의 경우 optimizer가 tuple이므로 zero_grad를 각각 호출
-                if isinstance(model_optim, tuple):
-                    for opt in model_optim:
-                        opt.zero_grad()
-                else:
-                    model_optim.zero_grad()
-                
+            for batch_x, batch_y in train_loader:
                 batch_x = batch_x.float().to(self.device)
                 
                 # For reconstruction models, target is the input itself
@@ -584,12 +197,12 @@ class Exp_Anomaly_Detection(Exp_Basic):
                     batch_y = batch_y.float().to(self.device)
 
                 # Model-specific training step (backward와 step이 이미 포함됨)
-                loss, score = self._train_step(batch_x, batch_y, model_optim, criterion, epoch + 1)
+                loss, score = self.model.train_step(batch_x, batch_y, model_optim, criterion, epoch + 1)
                 train_loss.append(loss)
 
             train_loss = np.average(train_loss)
-            vali_loss, vali_score = self.vali(vali_data, vali_loader, criterion)
-            test_loss, test_score = self.vali(test_data, test_loader, criterion)
+            vali_loss, vali_score = self.model.validation_step(vali_data, vali_loader, criterion)
+            test_loss, test_score = self.model.validation_step(test_data, test_loader, criterion)
             
             train_metrics = {'loss': train_loss}
             val_metrics = {'loss': vali_loss}
@@ -604,7 +217,6 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 self.logger.info("Early stopping")
                 break
 
-            # Learning rate 조정 (USAD 모델의 경우 두 optimizer 모두 조정)
             if isinstance(model_optim, tuple):
                 for opt in model_optim:
                     adjust_learning_rate(opt, epoch + 1, self.args)
@@ -731,8 +343,8 @@ class Exp_Anomaly_Detection(Exp_Basic):
                 batch_y = batch_y.float().to(self.device)
                 
                 # 모델별 테스트 로직 실행
-                batch_pred, batch_dist = self._test_step(
-                    batch_x, batch_y, criterion, i, alpha, beta
+                batch_pred, batch_dist = self.model.test_step(
+                    batch_x, batch_y, criterion
                 )
                 
                 pred.append(batch_pred)
@@ -754,115 +366,7 @@ class Exp_Anomaly_Detection(Exp_Basic):
         
         return dist, attack, pred
 
-    def _test_step(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                  criterion: nn.Module, batch_idx: int, alpha: float, beta: float) -> Tuple[np.ndarray, np.ndarray]:
-        """한 배치의 테스트를 수행합니다."""
-        if self.args.model in ['VTTSAT', 'VTTPAT']:
-            return self._test_vttsat_vttpat(batch_x, batch_y, criterion)
-        elif self.args.model == 'LSTM_VAE':
-            return self._test_lstm_vae(batch_x, batch_y, criterion)
-        elif self.args.model == 'USAD':
-            return self._test_usad(batch_x, batch_y, alpha, beta)
-        elif self.args.model == 'OmniAnomaly':
-            return self._test_omnianomaly(batch_x, batch_y, criterion, batch_idx)
-        elif self.args.model == 'DAGMM':
-            return self._test_dagmm(batch_x, batch_y, criterion)
-        elif self.args.model == 'AnomalyTransformer':
-            return self._test_anomaly_transformer(batch_x, batch_y, criterion)
-        else:
-            return self._test_default(batch_x, batch_y, criterion)
-
-    def _test_vttsat_vttpat(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                           criterion: nn.Module) -> Tuple[np.ndarray, np.ndarray]:
-        """VTTSAT/VTTPAT 모델 테스트"""
-        predictions, _ = self.model(batch_x)
-        score = criterion(predictions, batch_y).cpu().detach().numpy()
-        pred = predictions.cpu().detach().numpy()
-        dist = np.mean(score, axis=2)
-        return pred, dist
-
-    def _test_lstm_vae(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                      criterion: nn.Module) -> Tuple[np.ndarray, np.ndarray]:
-        """LSTM-VAE 모델 테스트"""
-        predictions = self.model(batch_x)
-        score = criterion(predictions[0], batch_y).cpu().detach().numpy()
-        pred = predictions[0].cpu().detach().numpy()
-        dist = np.mean(score, axis=2)
-        return pred, dist
-
-    def _test_usad(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                  alpha: float, beta: float) -> Tuple[np.ndarray, np.ndarray]:
-        """USAD 모델 테스트"""
-        predictions = self.model(batch_x)
-        w1 = predictions[0].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        w2 = predictions[1].view(([batch_x.shape[0], batch_x.shape[1], batch_x.shape[2]]))
-        pred = (alpha * (batch_x - w1) + beta * (batch_x - w2)).cpu().detach().numpy()
-        dist = (alpha * torch.mean((batch_x - w1) ** 2, axis=2) + 
-               beta * torch.mean((batch_x - w2) ** 2, axis=2)).detach().cpu().numpy()
-        return pred, dist
-
-    def _test_omnianomaly(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                         criterion: nn.Module, batch_idx: int) -> Tuple[np.ndarray, np.ndarray]:
-        """OmniAnomaly 모델 테스트"""
-        hidden = None
-        predictions, _, _, hidden = self.model(batch_x, hidden if batch_idx == 0 else None)
-        score = criterion(predictions, batch_y).cpu().detach().numpy()
-        pred = predictions.cpu().detach().numpy()
-        dist = np.mean(score, axis=2)
-        return pred, dist
-
-    def _test_dagmm(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                   criterion: nn.Module) -> Tuple[np.ndarray, np.ndarray]:
-        """DAGMM 모델 테스트"""
-        _, x_hat, _, _ = self.model(batch_x)
-        score = criterion(x_hat, batch_y).cpu().detach().numpy()
-        pred = x_hat.cpu().detach().numpy()
-        dist = np.mean(score, axis=2)
-        return pred, dist
-
-    def _test_anomaly_transformer(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                                criterion: nn.Module) -> Tuple[np.ndarray, np.ndarray]:
-        """AnomalyTransformer 모델 테스트"""
-        output, series, prior, _ = self.model(batch_x)
-        pred = output.cpu().detach().numpy()
-        
-        loss = torch.mean(criterion(batch_x, output), dim=-1)
-        series_loss = 0.0
-        prior_loss = 0.0
-        temperature = 50
-        
-        for u in range(len(prior)):
-            if u == 0:
-                series_loss = self._my_kl_loss(series[u], (
-                        prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                               self.args.window_size)).detach()) * temperature
-                prior_loss = self._my_kl_loss(
-                    (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                            self.args.window_size)),
-                    series[u].detach()) * temperature
-            else:
-                series_loss += self._my_kl_loss(series[u], (
-                        prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                               self.args.window_size)).detach()) * temperature
-                prior_loss += self._my_kl_loss(
-                    (prior[u] / torch.unsqueeze(torch.sum(prior[u], dim=-1), dim=-1).repeat(1, 1, 1,
-                                                                                            self.args.window_size)),
-                    series[u].detach()) * temperature
-
-        metric = torch.softmax((-series_loss - prior_loss), dim=-1)
-        cri = metric * loss
-        dist = cri.detach().cpu().numpy()
-        
-        return pred, dist
-
-    def _test_default(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
-                     criterion: nn.Module) -> Tuple[np.ndarray, np.ndarray]:
-        """기본 모델 테스트"""
-        predictions = self.model(batch_x)
-        pred = predictions.cpu().detach().numpy()
-        score = criterion(predictions, batch_y).cpu().detach().numpy()
-        dist = np.mean(score, axis=2)
-        return pred, dist
+    
 
     def _calculate_anomaly_metrics(self, dist: np.ndarray, labels: np.ndarray) -> Tuple[Dict[str, Any], float]:
         """이상 탐지 메트릭을 계산합니다."""
@@ -874,10 +378,10 @@ class Exp_Anomaly_Detection(Exp_Basic):
         except ValueError as e:
             self.logger.warning(f"Could not calculate standard metrics: {e}")
             auc, ap = 0.0, 0.0
-        
+            
         history = {
             'threshold': [np.percentile(dist, 95)],  # 95th percentile as threshold
-            'auc': auc,
+                'auc': auc,
             'ap': ap
         }
         

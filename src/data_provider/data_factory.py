@@ -297,74 +297,81 @@ class _ETTDataset(Dataset):
             return self.scaler.inverse_transform(data)
         return data
 
-
-class _PSMDataset(Dataset):
-    """PSM dataset loader for anomaly detection."""
+class _BaseADDataset(Dataset):
+    """Base dataset class for anomaly detection."""
     
     def __init__(self, args: BaseConfig, flag: str):
         self.args = args
-        self.flag = flag
+        self.flag = flag        
         
-        # PSM 데이터 경로 설정
-        if flag == 'train':
-            data_path = Path(args.root_path) / 'train.csv'
-            label_path = Path(args.root_path) / 'train_label.csv'
-        elif flag == 'val':
-            data_path = Path(args.root_path) / 'train.csv'  # validation은 train 데이터의 일부 사용
-            label_path = Path(args.root_path) / 'train_label.csv'
-        else:  # test
-            data_path = Path(args.root_path) / 'test.csv'
-            label_path = Path(args.root_path) / 'test_label.csv'
+    def __len__(self) -> int:
+        raise NotImplementedError
+    
+    def __getitem__(self, index: int):
+        raise NotImplementedError
+    
+class _PSMDataset(_BaseADDataset):
+    """PSM dataset loader for anomaly detection."""
+    
+    def __init__(self, args: BaseConfig, flag: str):
+        super().__init__(args, flag)
         
-        # 데이터 로드
-        self.data = pd.read_csv(data_path)
-        self.label_data = pd.read_csv(label_path)
+        train_data = pd.read_csv(Path(args.root_path) / 'train.csv')
+        train_label = pd.read_csv(Path(args.root_path) / 'train_label.csv')
+        test_data = pd.read_csv(Path(args.root_path) / 'test.csv')
+        test_label = pd.read_csv(Path(args.root_path) / 'test_label.csv')
         
-        # 특성 선택 (첫 번째 컬럼은 timestamp_(min)이므로 제외)
-        feature_cols = [col for col in self.data.columns if col != 'timestamp_(min)']
-        self.features = self.data[feature_cols].values
+        train_data = train_data.dropna()
+        train_label = train_label.dropna()
+        test_data = test_data.dropna()
+        test_label = test_label.dropna()
         
+        train_total_len = len(train_data)
+        train_len = int(train_total_len * self.args.valid_split_rate)
+        
+        valid_data = train_data[train_len:]
+        valid_label = train_label[train_len:]
+        train_data = train_data[:train_len]
+        train_label = train_label[:train_len]
+        
+        feature_cols = [col for col in train_data.columns if col != 'timestamp_(min)']
+        train_data = train_data[feature_cols]
+        valid_data = valid_data[feature_cols]
+        test_data = test_data[feature_cols]
+        
+        ds = DataScaler(getattr(self.args, 'scale_method', 'standard'))
+        train_data, valid_data, test_data = ds.fit_transform(train_data, valid_data, test_data)
+
+        if self.flag == 'train':
+            self.data = train_data
+            self.label_data = train_label
+        elif self.flag == 'val':
+            self.data = valid_data
+            self.label_data = valid_label
+        else:
+            self.data = test_data
+            self.label_data = test_label
+        
+        self.features = self.data
+        self.label_data = self.label_data
         # 라벨 처리 - 연속값을 이진값으로 변환
         if 'attack' in self.label_data.columns:
             # attack 컬럼이 있는 경우
-            raw_labels = self.label_data['attack'].values
+            raw_labels = self.label_data['attack']
         else:
             # attack 컬럼이 없는 경우, 첫 번째 컬럼 사용
-            raw_labels = self.label_data.iloc[:, 1].values
-        
-        # 연속값을 이진값으로 변환 (임계값 기반)
-        # threshold = np.percentile(raw_labels, 95)  # 95th percentile을 임계값으로 사용
-        # self.binary_labels = (raw_labels > threshold).astype(int)
+            raw_labels = self.label_data.iloc[:, 1]
+            
         self.binary_labels = (raw_labels > 0).astype(int)
         
         # 시퀀스 길이 설정
         self.seq_len = args.seq_len
-        self.feature_num = len(feature_cols)
+        self.feature_num = len(self.features[0])
         
         # USAD 모델을 위한 차원 설정
         self.win_size = self.seq_len
         self.enc_in = self.feature_num
         self.window_size = self.seq_len  # USAD 모델 호환성
-        self.feature_num = self.feature_num  # USAD 모델 호환성
-        
-        # 데이터 정규화: DataScaler 사용 (train에 fit, split별 적용)
-        scale_method = getattr(self.args, 'scale_method', 'standard')
-        train_csv = pd.read_csv(Path(args.root_path) / 'train.csv')
-        test_csv = pd.read_csv(Path(args.root_path) / 'test.csv')
-        train_feats_all = train_csv[feature_cols].values.astype(np.float32)
-        # val은 train 분포 사용
-        val_feats_all = train_feats_all
-        test_feats_all = test_csv[feature_cols].values.astype(np.float32)
-        ds = DataScaler(scale_method)
-        train_scaled_all, val_scaled_all, test_scaled_all = ds.fit_transform(
-            train_feats_all, val_feats_all, test_feats_all
-        )
-        if flag == 'train':
-            self.features = train_scaled_all.astype(np.float32)
-        elif flag == 'val':
-            self.features = val_scaled_all.astype(np.float32)
-        else:
-            self.features = test_scaled_all.astype(np.float32)
         
         # BuildDataset과 유사한 방식으로 유효한 윈도우 인덱스 생성
         self.valid_idxs = self._generate_valid_indices()
@@ -429,7 +436,7 @@ class _PSMDataset(Dataset):
         return np.array(all_labels)
 
 
-class _SWaTDataset(Dataset):
+class _SWaTDataset(_BaseADDataset):
     """SWaT dataset loader using PKL files.
 
     Expects files under /TS-Unity/datasets/SWaT/:
@@ -441,193 +448,101 @@ class _SWaTDataset(Dataset):
     """
 
     def __init__(self, args: BaseConfig, flag: str):
-        self.args = args
-        self.flag = flag
+        super().__init__(args, flag)
         self.seq_len = args.seq_len
-        self.label_len = getattr(args, 'label_len', max(1, self.seq_len // 2))
-        self.pred_len = getattr(args, 'pred_len', 1)
-
-        base = Path('/TS-Unity/datasets/SWaT')
-        if not base.exists():
-            raise FileNotFoundError(f"SWaT directory not found: {base}")
-
-        # Find pkl files (support common SWaT names)
-        import glob
-        normal_candidates = (
-            sorted(glob.glob(str(base / 'SWaT_Dataset_Normal*.pkl'))) or
-            sorted(glob.glob(str(base / 'train*.pkl'))) or
-            [str(base / 'train.pkl')]
-        )
-        attack_candidates = (
-            sorted(glob.glob(str(base / 'SWaT_Dataset_Attack*.pkl'))) or
-            sorted(glob.glob(str(base / 'test*.pkl'))) or
-            [str(base / 'test.pkl')]
-        )
-
-        # Load appropriate file
-        import pickle
-        if flag in ('train', 'val'):
-            pkl_path = Path(normal_candidates[0])
+        
+        # SWaT (Secure Water Treatment) 데이터셋 로드
+        # pickle 파일에서 데이터를 읽고 불필요한 컬럼 제거
+        trainset = pd.read_pickle(Path(args.root_path) / 'SWaT_Dataset_Normal_v1.pkl').drop(['Normal/Attack', ' Timestamp'], axis=1).to_numpy()
+        
+        # ===== 학습/검증 데이터 분할 =====
+        # 비율 기반으로 학습 데이터를 학습용과 검증용으로 분할
+        valid_split_index = int(len(trainset) * self.args.valid_split_rate)  # 분할 지점 계산
+        validset = trainset[valid_split_index:]  # 검증 데이터 (뒤쪽 20%)
+        trainset = trainset[:valid_split_index]  # 학습 데이터 (앞쪽 80%)
+        train_label = np.zeros(len(trainset))
+        valid_label = np.zeros(len(validset))
+        
+        # ===== 테스트 데이터 로드 =====
+        # 테스트 데이터는 별도 파일에서 로드
+        testset = pd.read_pickle(Path(args.root_path) / 'SWaT_Dataset_Attack_v0.pkl')
+        
+        # ===== 타임스탬프 생성 =====
+        # SWaT 데이터는 연속적인 인덱스를 타임스탬프로 사용
+        train_timestamp = np.arange(len(trainset))    # 학습 데이터 타임스탬프
+        valid_timestamp = np.arange(len(validset))    # 검증 데이터 타임스탬프
+        test_timestamp = np.arange(len(testset))      # 테스트 데이터 타임스탬프
+        
+        # ===== 이상 라벨 처리 =====
+        # 테스트 데이터의 이상 라벨 추출 및 변환
+        test_label = testset['Normal/Attack']  # 원본 라벨 추출
+        test_label[test_label == 'Normal'] = 0  # 'Normal'을 0으로 변환
+        test_label[test_label != 0] = 1         # 나머지('Attack')를 1로 변환
+        
+        # ===== 테스트 데이터 정리 =====
+        # 이상 라벨과 타임스탬프 컬럼을 제거하고 numpy 배열로 변환
+        testset = testset.drop(['Normal/Attack', ' Timestamp'], axis=1).to_numpy()
+        
+        ds = DataScaler(getattr(self.args, 'scale_method', 'standard'))
+        trainset, validset, testset = ds.fit_transform(trainset, validset, testset)
+        
+        if self.flag == 'train':
+            self.data = trainset
+            self.label_data = train_label
+        elif self.flag == 'val':
+            self.data = validset
+            self.label_data = valid_label
         else:
-            pkl_path = Path(attack_candidates[0])
-        with open(pkl_path, 'rb') as f:
-            obj = pickle.load(f)
-
-        # Convert to DataFrame if needed
-        import pandas as pd
-        if isinstance(obj, pd.DataFrame):
-            df = obj.copy()
-        elif isinstance(obj, dict) and 'data' in obj:
-            df = pd.DataFrame(obj['data'])
-        else:
-            df = pd.DataFrame(obj)
-
-        # SWaT conventions per reference snippet
-        time_col_candidates = [' Timestamp', 'timestamp', 'time']
-        label_col_candidates = ['Normal/Attack', 'label', 'anomaly', 'attack', 'y']
-        time_col = next((c for c in time_col_candidates if c in df.columns), None)
-        label_col = next((c for c in label_col_candidates if c in df.columns), None)
-
-        if time_col is not None and time_col in df:
-            tseries = pd.to_datetime(df[time_col], errors='coerce')
-        else:
-            # Fallback: generate monotonically increasing times (hourly)
-            tseries = pd.date_range('2000-01-01', periods=len(df), freq='H')
-
-        # Feature matrix: drop time/label columns, keep numeric only
-        feature_df = df.drop(columns=[c for c in [time_col, label_col] if c is not None])
-        feature_df = feature_df.select_dtypes(include=[np.number])
-        # If user constrained feature count (via --nvars/enc_in), subselect columns
-        try:
-            requested_vars = int(getattr(self.args, 'enc_in', 0))
-            if requested_vars and requested_vars > 0 and requested_vars <= feature_df.shape[1]:
-                feature_df = feature_df.iloc[:, :requested_vars]
-        except Exception:
-            pass
-        values = feature_df.values.astype(np.float32)
-
-        # Optional labels from CSV if available (for test)
-        labels_series = None
-        label_csv_candidates = sorted(glob.glob(str(base / '*label*.csv')))
-        if label_csv_candidates:
-            label_df = pd.read_csv(label_csv_candidates[0])
-            # Try to find a column with label info
-            for c in label_df.columns:
-                if str(c).lower() in {'label', 'attack', 'anomaly', 'y'}:
-                    labels_series = label_df[c]
-                    break
-            if labels_series is None and label_df.shape[1] >= 1:
-                labels_series = label_df.iloc[:, -1]
-
-        # Split train/val/test per provided reference
-        valid_split_rate = 0.8
-        if flag == 'train':
-            split_idx = int(len(values) * valid_split_rate)
-            self.data = values[:split_idx]
-            self.time = pd.Series(tseries[:split_idx]).reset_index(drop=True)
-            self.has_labels = False
-        elif flag == 'val':
-            split_idx = int(len(values) * valid_split_rate)
-            self.data = values[split_idx:]
-            self.time = pd.Series(tseries[split_idx:]).reset_index(drop=True)
-            self.has_labels = False
-        else:
-            self.data = values
-            self.time = pd.Series(tseries).reset_index(drop=True)
-            # Attach labels from CSV or attack PKL
-            if labels_series is not None:
-                lab = np.asarray(labels_series).astype(np.float32)
-            elif label_col is not None and label_col in df.columns:
-                lab_raw = df[label_col].copy()
-                lab = np.where(lab_raw.astype(str) == 'Normal', 0.0, 1.0).astype(np.float32)
-            else:
-                lab = None
-
-            if lab is not None:
-                if len(lab) != len(self.data):
-                    m = min(len(lab), len(self.data))
-                    lab = lab[:m]
-                    self.data = self.data[:m]
-                    self.time = self.time.iloc[:m].reset_index(drop=True)
-                self.labels = lab
-                self.has_labels = True
-            else:
-                self.has_labels = False
-
-        # Standardize using train stats (load train pkl for stats)
-        train_candidates = (
-            sorted(glob.glob(str(base / 'SWaT_Dataset_Normal*.pkl'))) or
-            sorted(glob.glob(str(base / 'train*.pkl'))) or
-            [str(base / 'train.pkl')]
-        )
-        with open(train_candidates[0], 'rb') as f:
-            train_obj = pickle.load(f)
-        if isinstance(train_obj, pd.DataFrame):
-            train_df = train_obj.copy()
-        elif isinstance(train_obj, dict) and 'data' in train_obj:
-            train_df = pd.DataFrame(train_obj['data'])
-        else:
-            train_df = pd.DataFrame(train_obj)
-        if time_col is not None and time_col in train_df:
-            train_df = train_df.drop(columns=[time_col])
-        if label_col is not None and label_col in train_df:
-            train_df = train_df.drop(columns=[label_col])
-        # Ensure numeric-only and match requested feature count
-        train_df = train_df.select_dtypes(include=[np.number])
-        try:
-            requested_vars = int(getattr(self.args, 'enc_in', 0))
-            if requested_vars and requested_vars > 0 and requested_vars <= train_df.shape[1]:
-                train_df = train_df.iloc[:, :requested_vars]
-        except Exception:
-            pass
-        train_values = train_df.values.astype(np.float32)
-
-        mean = train_values.mean(axis=0)
-        std = train_values.std(axis=0) + 1e-8
-        self.scaler = StandardScaler(mean, std)
-        self.data_scaled = self.scaler.transform(self.data)
-
-        self.enc_in = self.data.shape[1]
-        self.c_out = self.data.shape[1]
-        self.args.enc_in = self.enc_in
-        self.args.dec_in = self.enc_in
-        self.args.c_out = self.c_out
+            self.data = testset
+            self.label_data = test_label
+        
+        self.feature_num = self.data.shape[1]
+        self.valid_idxs = self._generate_valid_indices()
+        
+    def _generate_valid_indices(self) -> List[int]:
+        """유효한 윈도우 인덱스를 생성합니다."""
+        valid_idxs = []
+        
+        # argument의 seq_len을 기반으로 stride 계산
+        # train/validation은 stride=seq_len//2, test는 stride=seq_len으로 설정
+        if self.flag in ['train', 'val']:
+            slide_size = self.seq_len // 2  # 오버랩 (100//2 = 50)
+        else:  # test
+            slide_size = self.seq_len  # 오버랩 없음 (100)
+            
+        for i in range(0, len(self.data) - self.seq_len + 1, slide_size):
+            valid_idxs.append(i)
+            
+        return valid_idxs
 
     def __len__(self) -> int:
         # For anomaly detection, we still generate windows for batching
-        return max(0, len(self.data) - self.seq_len - self.pred_len + 1)
+        return len(self.valid_idxs)
 
     def __getitem__(self, index: int):
-        s_begin = index
-        s_end = s_begin + self.seq_len
-        r_begin = s_end - self.label_len
-        r_end = r_begin + self.label_len + self.pred_len
-
-        seq_x = self.data_scaled[s_begin:s_end]
-        # For anomaly detection, provide label window if available; else zeros
-        if getattr(self, 'has_labels', False):
-            lab_slice = self.labels[r_begin:r_end].reshape(-1, 1)
-            seq_y = lab_slice.astype(np.float32)
-        else:
-            seq_y = np.zeros((self.label_len + self.pred_len, 1), dtype=np.float32)
-
-        def _tf(dt_series: pd.Series) -> np.ndarray:
-            return np.stack([
-                dt_series.dt.month.values,
-                dt_series.dt.day.values,
-                dt_series.dt.weekday.values,
-                dt_series.dt.hour.values,
-            ], axis=1).astype(np.float32)
-
-        x_mark = _tf(self.time.iloc[s_begin:s_end])
-        y_mark = _tf(self.time.iloc[r_begin:r_end])
-
-        return (
-            torch.from_numpy(seq_x),
-            torch.from_numpy(seq_y),
-            torch.from_numpy(x_mark),
-            torch.from_numpy(y_mark),
-        )
+        if index >= len(self.valid_idxs):
+            raise IndexError(f"인덱스 {index}가 범위를 벗어났습니다.")
+        
+        start_idx = self.valid_idxs[index]
+        end_idx = start_idx + self.seq_len
+        
+        # 시퀀스 데이터 추출
+        seq = self.data[start_idx:end_idx]
+        seq_labels = self.label_data[start_idx:end_idx]
+        
+        # batch_x: (seq_len, feature_num)
+        batch_x = torch.FloatTensor(seq)
+        
+        # batch_y: (seq_len, feature_num) - reconstruction을 위해 입력과 동일
+        batch_y = torch.FloatTensor(seq)
+        
+        # batch_x_mark: (seq_len, feature_num) - 시간 특성 (간단하게 0으로 설정)
+        batch_x_mark = torch.zeros(self.seq_len, self.feature_num)
+        
+        # batch_y_mark: (seq_len, feature_num) - 시간 특성 (간단하게 0으로 설정)
+        batch_y_mark = torch.zeros(self.seq_len, self.feature_num)
+        
+        return batch_x, batch_y, batch_x_mark, batch_y_mark
 
 
 class _WeatherDataset(Dataset):

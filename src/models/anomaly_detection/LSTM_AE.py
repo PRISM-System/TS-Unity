@@ -6,9 +6,11 @@ import shutil
 from pathlib import Path
 from einops import rearrange, reduce, repeat
 from typing import Dict, Any, Tuple, Optional
+from .BaseModel import BaseAnomalyDetectionModel
+import numpy as np
 
 
-class LSTMAutoencoder(nn.Module):
+class LSTMAutoencoder(BaseAnomalyDetectionModel):
     """
     LSTM 기반 오토인코더 모델
     
@@ -20,7 +22,7 @@ class LSTMAutoencoder(nn.Module):
         Args:
             config: Configuration object with model parameters
         """
-        super(LSTMAutoencoder, self).__init__()
+        super(LSTMAutoencoder, self).__init__(config)
         
         # Handle both old params dict format and new config format
         if hasattr(config, 'enc_in'):
@@ -151,62 +153,79 @@ class LSTMAutoencoder(nn.Module):
         """
         return self.forward(x)
     
-    def detect_anomaly(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def train_step(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
+                   optimizer: torch.optim.Optimizer, criterion: nn.Module, 
+                   epoch: int = 1, **kwargs) -> Tuple[float, np.ndarray]:
         """
-        Detect anomalies using reconstruction error.
+        LSTM-AE specific training step with gradient clipping.
         
         Args:
-            x: Input tensor
-            
-        Returns:
-            Tuple of (reconstructed_output, anomaly_scores)
-        """
-        reconstructed = self.reconstruct(x)
-        
-        # Calculate reconstruction error as anomaly score
-        anomaly_scores = torch.mean((x - reconstructed) ** 2, dim=-1)
-        
-        return reconstructed, anomaly_scores
-    
-    def get_anomaly_score(self, x: torch.Tensor, method: str = 'mse') -> torch.Tensor:
-        """
-        Calculate anomaly scores using reconstruction error.
-        
-        Args:
-            x: Input tensor
-            method: Scoring method ('mse', 'mae', 'combined')
-            
-        Returns:
-            Anomaly scores tensor
-        """
-        reconstructed = self.reconstruct(x)
-        
-        if method == 'mse':
-            return torch.mean((x - reconstructed) ** 2, dim=-1)
-        elif method == 'mae': 
-            return torch.mean(torch.abs(x - reconstructed), dim=-1)
-        elif method == 'combined':
-            mse = torch.mean((x - reconstructed) ** 2, dim=-1)
-            mae = torch.mean(torch.abs(x - reconstructed), dim=-1)
-            return 0.5 * (mse + mae)
-        else:
-            raise ValueError(f"Unknown scoring method: {method}")
-    
-    def compute_loss(self, x: torch.Tensor, criterion: nn.Module) -> torch.Tensor:
-        """
-        Compute training loss for LSTM autoencoder.
-        
-        Args:
-            x: Input tensor
+            batch_x: Input tensor
+            batch_y: Target tensor
+            optimizer: Optimizer
             criterion: Loss function
+            epoch: Current epoch number
+            **kwargs: Additional arguments
             
         Returns:
-            Loss tensor
+            Tuple of (loss_value, anomaly_scores)
         """
-        reconstructed = self.reconstruct(x)
-        loss = criterion(reconstructed, x)
-        return torch.mean(loss)
-
+        self.train()
+        optimizer.zero_grad()
+        
+        # Forward pass
+        output = self.forward(batch_x)
+        
+        # Compute loss
+        loss = criterion(output, batch_y)
+        
+        # Check for NaN or Inf
+        if torch.isnan(loss).any() or torch.isinf(loss).any():
+            print(f"Warning: NaN or Inf loss detected at epoch {epoch}")
+            return float('inf'), np.zeros((batch_x.shape[0], batch_x.shape[1]))
+        
+        # Backward pass
+        loss.backward()
+        
+        # Gradient clipping for LSTM stability
+        if hasattr(self.config, 'grad_clip') and self.config.grad_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=self.config.grad_clip)
+        
+        # Update parameters
+        optimizer.step()
+        
+        # Calculate anomaly scores
+        with torch.no_grad():
+            reconstructed = self.reconstruct(batch_x)
+            anomaly_scores = self._calculate_anomaly_scores(batch_x, reconstructed)
+            if isinstance(anomaly_scores, torch.Tensor):
+                anomaly_scores = anomaly_scores.cpu().numpy()
+        
+        return loss.item(), anomaly_scores
+    
+    def validation_step(self, batch_x: torch.Tensor, batch_y: torch.Tensor, 
+                       criterion: nn.Module, **kwargs) -> Tuple[float, np.ndarray]:
+        """
+        Perform a single validation step.
+        
+        Args:
+            batch_x: Input tensor
+            batch_y: Target tensor
+            criterion: Loss function
+            **kwargs: Additional arguments
+            
+        Returns:
+            Tuple of (loss_value, anomaly_scores)
+        """
+        self.eval()
+        with torch.no_grad():
+            output = self.forward(batch_x)
+            loss = criterion(output, batch_y)
+            anomaly_scores = self._calculate_anomaly_scores(batch_x, output)
+            if isinstance(anomaly_scores, torch.Tensor):
+                anomaly_scores = anomaly_scores.cpu().numpy()
+        
+        return loss.item(), anomaly_scores
 
 # Compatibility alias
 Model = LSTMAutoencoder

@@ -79,6 +79,7 @@ class BaseConfig:
     target: str = field(default='OT', metadata={'description': 'Target feature for S/MS tasks'})
     freq: str = field(default='h', metadata={'description': 'Time frequency encoding'})
     checkpoints: str = field(default='./checkpoints/', metadata={'description': 'Checkpoint directory'})
+    valid_split_rate: float = field(default=0.8, metadata={'description': 'Validation split ratio (0.0-1.0)'})
     
     # Sequence configuration
     seq_len: int = field(default=96, metadata={'description': 'Input sequence length'})

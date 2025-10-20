@@ -1039,6 +1039,10 @@ class ConfigManager:
             choices=['standard', 'minmax', 'minmax_square', 'minmax_m1p1'],
             help='Scaling method for datasets'
         )
+        parser.add_argument(
+            '--valid_split_rate', type=float, default=0.8,
+            help='Validation split ratio (0.0-1.0)'
+        )
         
         # Sequence configuration
         parser.add_argument(
